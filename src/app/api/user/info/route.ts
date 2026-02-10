@@ -113,12 +113,19 @@ export async function GET() {
     profile.avatar,
     profile.avatarUrl
   );
+  const email = pickString(
+    source.email,
+    source.mail,
+    profile.email,
+    user.email
+  );
 
   const normalized = {
     ...source,
     name: name ?? null,
     bio: bio ?? null,
     avatar: avatar ?? null,
+    email: email ?? null,
   };
 
   console.log(`${logPrefix} END`, {

@@ -1,4 +1,5 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { ALLOWED_SECONDME_SCOPES, DEFAULT_SECONDME_SCOPES } from "@/lib/secondme-scopes";
 
 function mask(value: string | undefined) {
   if (!value) return "<empty>";
@@ -6,16 +7,39 @@ function mask(value: string | undefined) {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
-export async function GET() {
+function resolveScopes(rawScope: string | null) {
+  const requested = (rawScope ?? "")
+    .split(/[\s,]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  const uniqueRequested = Array.from(new Set(requested));
+  const allowedSet = new Set<string>(ALLOWED_SECONDME_SCOPES);
+  const validScopes = uniqueRequested.filter((scope) => allowedSet.has(scope));
+  const invalidScopes = uniqueRequested.filter((scope) => !allowedSet.has(scope));
+  const usedDefault = validScopes.length === 0;
+  const scope = (usedDefault ? DEFAULT_SECONDME_SCOPES : validScopes).join(" ");
+
+  return {
+    scope,
+    usedDefault,
+    requestedScopes: uniqueRequested,
+    invalidScopes,
+  };
+}
+
+export async function GET(request: Request) {
   const requestId = crypto.randomUUID().slice(0, 8);
   const logPrefix = `[SecondMe OAuth Login][${requestId}]`;
+  const currentUrl = new URL(request.url);
+
   console.log(`${logPrefix} BEGIN`, {
     stage: "begin",
   });
 
   const clientId = process.env.SECONDME_CLIENT_ID;
   const redirectUri = process.env.SECONDME_REDIRECT_URI;
-  const scope = "user.info user.info.shades";
+  const rawScope = currentUrl.searchParams.get("scope");
+  const { scope, usedDefault, requestedScopes, invalidScopes } = resolveScopes(rawScope);
   const state = crypto.randomUUID();
 
   console.log(`${logPrefix} MIDDLE(中间变量)`, {
@@ -23,6 +47,9 @@ export async function GET() {
     clientId: mask(clientId),
     redirectUri,
     oauthUrl: process.env.SECONDME_OAUTH_URL,
+    requestedScopes,
+    invalidScopes,
+    usedDefault,
     scope,
     state,
   });
