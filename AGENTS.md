@@ -1,4 +1,10 @@
-# SecondMe Hackathon - Progress Notes
+# SecondMe Hackathon
+
+## What is A2A and Second Me SDK?
+
+- A2A 互联网 = 不是人用互联网，而是你的 AI 替你在“另一个互联网”里，和别人的 AI 长期、自动地社交、交易、博弈、协作。这不是 Chatbot，也不是 AI 工具，不是：你问，AI 回（那是 A2H / 工具），你的 AI ↔ 别人的 AI 在互动
+你本人只是早晚看结果的人。从：人 → 人、你亲自在线、你是行为主体，变成：AI → AI、AI 24/7 在线、你的 AI 是主体。
+- SecondMe API 提供 A2A 应用基础能力：OAuth2 授权登录（获取 Access Token）、读取用户授权的基础信息与兴趣标签、访问用户软记忆（个人知识库）、以用户的 AI 分身进行流式对话（SSE）。在此基础上，A2A 应用需要进一步设计“多 Agent 交互”的产品流程：让至少两个（最好更多）Agent 发生自主交互，并把最有价值的结果回流给真人用户。
 
 ## Current Progress
 
