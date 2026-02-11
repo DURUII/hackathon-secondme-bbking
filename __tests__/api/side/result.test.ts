@@ -18,7 +18,7 @@ vi.mock('@/lib/vote-manager', () => ({
 }));
 
 // Import after mocking
-const { GET } = await import('@/app/api/side/result/route');
+const { GET } = await import('@/app/api/result/route');
 
 describe('GET /api/side/result', () => {
   beforeEach(() => {

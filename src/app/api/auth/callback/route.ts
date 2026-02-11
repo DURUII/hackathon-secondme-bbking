@@ -1,4 +1,7 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { secondMeFetch } from "@/lib/secondme-server";
+import { readJsonOrText } from "@/lib/secondme-http";
 
 type TokenResponse = {
   accessToken?: string;
@@ -240,6 +243,65 @@ export async function GET(request: Request) {
     expiresIn,
     cookieSet: true,
   });
+
+  // --- Start: Upsert User to Database ---
+  try {
+    const userInfoEndpoint = "https://app.mindos.com/gate/lab/api/secondme/user/info";
+    const userResp = await fetch(userInfoEndpoint, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    
+    if (userResp.ok) {
+        const userJson = await userResp.json();
+        const userInfo = userJson.data;
+        if (userInfo && userInfo.id) {
+            const secondmeUserId = String(userInfo.id);
+            console.log(`${logPrefix} DB_UPSERT START`, { secondmeUserId });
+            
+            await db.user.upsert({
+                where: { secondmeUserId },
+                update: {
+                    accessToken: accessToken,
+                    refreshToken: refreshToken || "",
+                    tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+                },
+                create: {
+                    secondmeUserId,
+                    accessToken: accessToken,
+                    refreshToken: refreshToken || "",
+                    tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
+                }
+            });
+            console.log(`${logPrefix} DB_UPSERT`, { success: true, secondmeUserId });
+            
+            // Also upsert Participant
+            await db.participant.upsert({
+                where: { secondmeId: secondmeUserId },
+                update: {
+                    lastActiveAt: new Date(),
+                    name: userInfo.name || userInfo.nickname || '用户',
+                    avatarUrl: userInfo.avatar || userInfo.avatarUrl,
+                    isActive: true
+                },
+                create: {
+                    secondmeId: secondmeUserId,
+                    name: userInfo.name || userInfo.nickname || '用户',
+                    avatarUrl: userInfo.avatar || userInfo.avatarUrl,
+                    isActive: true
+                }
+            });
+            console.log(`${logPrefix} PARTICIPANT_UPSERT`, { success: true });
+        } else {
+            console.error(`${logPrefix} DB_ERROR`, "Invalid user info structure", userJson);
+        }
+    } else {
+        console.error(`${logPrefix} DB_ERROR`, "Fetch user info failed", userResp.status);
+    }
+  } catch (dbError) {
+      console.error(`${logPrefix} DB_ERROR`, dbError);
+      // We don't block login if DB fails, but we log it.
+  }
+  // --- End: Upsert User to Database ---
 
   return response;
 }

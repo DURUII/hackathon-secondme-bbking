@@ -62,88 +62,43 @@ const MOCK_PARTICIPANTS = [
 
 export async function GET() {
   try {
-    // 1. Check if we need to seed
-    const count = await db.question.count();
-    
-    if (count === 0) {
-      console.log('[FEED] Seeding database with preset questions...');
-      
-      // Ensure Mock Participants exist
-      const participantMap = new Map<string, string>(); // name -> id
-      
-      for (const p of MOCK_PARTICIPANTS) {
-        // Try to find or create
-        let participant = await db.participant.findUnique({ where: { secondmeId: p.secondmeId } });
-        if (!participant) {
-          participant = await db.participant.create({
-            data: {
-              secondmeId: p.secondmeId,
-              name: p.name,
-              avatarUrl: p.avatarUrl,
-              isActive: true,
-            }
-          });
-        }
-        participantMap.set(p.name, participant.id);
-      }
-
-      // Get a seed user ID (optional)
-      const firstUser = await db.user.findFirst();
-      const seedUserId = firstUser?.id;
-
-      // Create Questions and Votes
-      for (const preset of PRESET_QUESTIONS) {
-        const question = await QuestionManager.createQuestion({
-          userId: seedUserId,
-          content: preset.content,
-          arenaType: preset.arenaType,
-          status: 'collected'
-        });
-
-        // Add Mock Votes
-        for (const vote of preset.mockVotes) {
-          const pId = participantMap.get(vote.name);
-          if (pId) {
-            await VoteManager.createVote({
-              questionId: question.id,
-              participantId: pId,
-              position: vote.position,
-              comment: vote.comment
-            });
+    // 1. Fetch questions
+    const [questions, totalParticipants, totalQuestions] = await Promise.all([
+      db.question.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          votes: true,
+          debateTurns: {
+            include: { speaker: true },
+            orderBy: { createdAt: 'asc' }
           }
-        }
-      }
-    }
+        },
+        take: 20, 
+      }),
+      db.participant.count(),
+      db.question.count()
+    ]);
 
-    // 2. Fetch questions with votes
-    const questions = await db.question.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: {
-        votes: true,
-      },
-      take: 20, 
-    });
-
-    // 3. Transform to Feed format
+    // 2. Transform to Feed format
     const feedItems = await Promise.all(questions.map(async (q) => {
       // Calculate ratios
       const totalVotes = q.votes.length;
       const redVotes = q.votes.filter(v => v.position === 1).length;
-      const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0;
-      const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0;
+      const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5; // Default 0.5 if no votes
+      const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0.5;
 
       // Get comments
       const redComments = q.votes.filter(v => v.position === 1).map(v => v.comment);
       const blueComments = q.votes.filter(v => v.position === -1).map(v => v.comment);
 
-      // Get participant names for preview
+      // Get preview comments
+      // ... (Existing logic or simplified)
       const participantIds = Array.from(new Set(q.votes.map(v => v.participantId).filter(Boolean) as string[]));
       const participants = await db.participant.findMany({
         where: { id: { in: participantIds } }
       });
       const participantMap = new Map(participants.map(p => [p.id, p]));
 
-      // Get preview comments (top 2 distinct participants)
       const previewComments = q.votes.slice(0, 2).map(v => {
         const p = v.participantId ? participantMap.get(v.participantId) : null;
         return {
@@ -153,30 +108,73 @@ export async function GET() {
         };
       });
 
-      // User info
-      let posterName = "热门话题";
-      let posterAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
+      // Format Debate Turns
+      const debateTurns = q.debateTurns.map(turn => ({
+        speakerId: turn.speakerId,
+        role: "辩手", // Simplified, or fetch role from DebateRole table if needed
+        content: turn.content,
+        type: turn.type
+      }));
       
+      // Need to map role from DebateRole? 
+      // For MVP, we can assume roles are "PRO_X" or "CON_X" stored in debateTurns? 
+      // Wait, debateTurns doesn't store role string, it links to Question and Speaker.
+      // We need to fetch DebateRole to know the role string (PRO_1 etc).
+      // Let's do a quick lookup or just rely on speaker name.
+      
+      // Better: fetch debateRoles too.
+      const roles = await db.debateRole.findMany({ where: { questionId: q.id } });
+      const roleMap = new Map(roles.map(r => [r.participantId, r.role]));
+      
+      const formattedTurns = q.debateTurns.map(turn => ({
+        speakerId: turn.speakerId,
+        role: roleMap.get(turn.speakerId) || 'UNKNOWN',
+        content: turn.content,
+        type: turn.type
+      }));
+
+      // Determine if this is a seed question (null user_id) or user question
+      const isSeedQuestion = !q.userId;
+
+      // Get the actual user who created this question
+      let creatorName = "社区精选";
+      let creatorAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
+
       if (q.userId) {
-         // In a real app we would fetch user info. 
-         // For now, let's just make it look consistent if it's a seed user
-         // If we had a User relation we could include it.
-         // Let's assume seed user is "匿名用户" for now unless we fetched it.
+        // User question - get real user info
+        const user = await db.user.findUnique({
+          where: { id: q.userId }
+        });
+        if (user && user.secondmeUserId) {
+          const participant = await db.participant.findUnique({
+            where: { secondmeId: user.secondmeUserId }
+          });
+          if (participant) {
+            creatorName = participant.name;
+            creatorAvatar = participant.avatarUrl || `https://api.dicebear.com/7.x/notionists/svg?seed=${participant.id}`;
+          }
+        }
       }
 
       return {
         id: q.id,
         userInfo: {
-          name: posterName,
-          avatarUrl: posterAvatar,
+          name: creatorName,
+          avatarUrl: creatorAvatar,
         },
-        timeAgo: new Date(q.createdAt).toLocaleDateString(),
+        timeAgo: new Date(q.createdAt).toLocaleString('zh-CN', {
+          month: 'numeric',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
         content: q.content,
         arenaType: q.arenaType,
         status: q.status,
         redRatio,
         blueRatio,
-        commentCount: totalVotes,
+        commentCount: totalVotes + formattedTurns.length, // Votes + Turns
+        debateTurns: formattedTurns,
         previewComments,
         fullComments: {
           red: redComments,
@@ -187,14 +185,19 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      data: feedItems
+      data: feedItems,
+      stats: {
+        totalParticipants,
+        totalQuestions
+      }
     });
 
   } catch (error) {
     console.error('[FEED] Error:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch feed' },
+      { success: false, error: 'Failed to fetch feed', details: String(error) },
       { status: 500 }
     );
   }
 }
+

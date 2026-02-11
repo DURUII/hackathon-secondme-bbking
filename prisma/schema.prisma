@@ -37,12 +37,48 @@ model Question {
   content     String
   imageUrl    String?  @map("image_url")
   arenaType   String   @default("toxic") @map("arena_type")
-  status      String   @default("pending")
+  status      String   @default("pending") // RECRUITING, DEBATING_R1, DEBATING_R2, CLOSED
+  round       Int      @default(0)
+  nextTurnAt  DateTime? @map("next_turn_at")
   createdAt   DateTime @default(now()) @map("created_at")
 
   votes       Vote[]
+  debateRoles DebateRole[]
+  debateTurns DebateTurn[]
 
   @@map("questions")
+}
+
+model DebateRole {
+  id            String   @id @default(cuid())
+  questionId    String   @map("question_id")
+  participantId String   @map("participant_id")
+  role          String   // PRO_1, PRO_2, CON_1, CON_2, AUDIENCE, HOST
+  initialStance Int      // -100 to 100
+  currentStance Int      // -100 to 100
+  isDevilsAdvocate Boolean @default(false) @map("is_devils_advocate")
+  
+  question      Question    @relation(fields: [questionId], references: [id])
+  participant   Participant @relation(fields: [participantId], references: [id])
+
+  @@unique([questionId, participantId])
+  @@map("debate_roles")
+}
+
+model DebateTurn {
+  id          String   @id @default(cuid())
+  questionId  String   @map("question_id")
+  speakerId   String   @map("speaker_id")
+  round       Int
+  content     String   @db.Text
+  type        String   // ARGUMENT, REBUTTAL, SUMMARY
+  voteSwing   Float?   // Impact score
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  question    Question    @relation(fields: [questionId], references: [id])
+  speaker     Participant @relation(fields: [speakerId], references: [id])
+
+  @@map("debate_turns")
 }
 
 model Vote {
@@ -67,6 +103,9 @@ model Participant {
   responseCount Int      @default(0) @map("response_count")
   lastActiveAt  DateTime? @map("last_active_at")
   createdAt     DateTime @default(now()) @map("created_at")
+
+  debateRoles   DebateRole[]
+  debateTurns   DebateTurn[]
 
   @@map("participants")
 }

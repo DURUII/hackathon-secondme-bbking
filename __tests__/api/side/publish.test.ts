@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { POST } from '@/app/api/side/publish/route';
+import { POST } from '@/app/api/publish/route';
 import { cookies } from 'next/headers';
 
 // Mock dependencies

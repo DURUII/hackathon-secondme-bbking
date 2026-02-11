@@ -6,8 +6,9 @@ export async function POST() {
     // Get authenticated user
     const user = await getUserFromToken();
     if (!user) {
+      console.warn('[REGISTER] Unauthorized: getUserFromToken returned null');
       return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
+        { success: false, error: 'Unauthorized', details: 'Could not fetch user info from SecondMe or DB' },
         { status: 401 }
       );
     }

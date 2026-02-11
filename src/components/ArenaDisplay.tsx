@@ -12,6 +12,12 @@ interface ArenaDisplayProps {
   blueRatio?: number;
   topRedComments?: string[];
   topBlueComments?: string[];
+  debateTurns?: Array<{
+    speakerId: string;
+    role: string;
+    content: string;
+    type: string;
+  }>;
   onViewResult?: () => void;
 }
 
@@ -85,10 +91,43 @@ export function ArenaDisplay({
           </div>
         ) : status === "pending" ? (
           <div className="text-center py-8 text-stone-400">
-            <p>等待 AI 评理中...</p>
+            <p>正在召集 AI 辩手...</p>
+            <p className="text-xs mt-2 text-stone-300">需要 6 位 SecondMe 公民</p>
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Live Debate Stream */}
+            {debateTurns.length > 0 && (
+              <div className="space-y-4 mb-6">
+                <div className="flex items-center gap-2 text-xs font-bold text-stone-400 uppercase tracking-widest">
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                  实时辩论中
+                </div>
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                  {debateTurns.map((turn, i) => {
+                    const isPro = turn.role.startsWith('PRO');
+                    return (
+                      <div key={i} className={`flex gap-3 ${isPro ? 'flex-row' : 'flex-row-reverse'}`}>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 ${isPro ? 'bg-rose-600' : 'bg-slate-700'}`}>
+                          {turn.role.split('_')[1]}
+                        </div>
+                        <div className={`p-3 rounded-2xl text-sm leading-relaxed max-w-[80%] ${
+                          isPro 
+                            ? 'bg-rose-50 text-rose-900 rounded-tl-none' 
+                            : 'bg-slate-50 text-slate-900 rounded-tr-none'
+                        }`}>
+                          <div className="text-xs font-bold opacity-50 mb-1">
+                            {isPro ? '正方' : '反方'}辩手 ({turn.role})
+                          </div>
+                          {turn.content}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Progress Bar */}
             <div className="space-y-2">
               <div className="flex justify-between text-xs font-bold uppercase tracking-wider">

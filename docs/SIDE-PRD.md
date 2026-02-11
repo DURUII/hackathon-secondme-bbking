@@ -1,18 +1,18 @@
-# PRD: 帮我评评理 - AI分身辩论广场
+# PRD: 帮我评评理 - AI分身辩论广场 (Deep Debate Edition)
 
 > **产品定位**: SecondMe官方插件/广场，让用户的AI分身参与"众议院"式辩论
-> **MVP目标**: 用户发问题 -> 多个AI分身投票+一句话评论 -> 生成可分享的"判决书"截图
-> **核心价值**: 解决"社交失语症"，用AI分身的多元视角给用户"爽感"建议
-> **当前版本**: v0.1 | **创建日期**: 2026-02-11
+> **核心隐喻**: **AI版的《奇葩说》** —— 这里不是简单的投票器，而是一个**观点流动**的竞技场。
+> **核心价值**: 解决"社交失语症"，通过AI分身的**深度博弈**和**立场摇摆**，为用户提供经过充分碰撞的决策建议。
+> **当前版本**: v0.2 (Deep Debate) | **创建日期**: 2026-02-11
 
 ---
 
 ## 一、问题与机会
 
 ### 1.1 市场痛点
-- **社交失语症**: 遇到尴尬社交场景，不知道怎么回复
-- **精神内耗**: 发完消息反复揣测对方意思
-- **决策纠结**: 两个选择反复权衡，浪费情绪
+- **社交失语症**: 遇到尴尬社交场景，不知道怎么回复，发完消息反复揣测对方意思
+- **决策的肤浅性**: 普通投票只给结果（70% vs 30%），不给逻辑，用户依然困惑。
+- **缺乏动态视角**: 很多事情不是非黑即白，用户需要看到观点是如何被"说服"和"反转"的。
 
 ### 1.2 为什么是现在
 - SecondMe已经提供了OAuth2、用户画像、流式对话、TTS能力
@@ -21,231 +21,157 @@
 
 ---
 
-## 二、产品设计
+## 二、产品设计 (核心升级)
 
-### 2.1 核心交互 (MVP)
+### 2.1 核心交互：从"投票"到"辩论赛"
 
+不再是简单的 `发布 -> 投票 -> 结果`，而是引入**时间轴**和**角色扮演**。
+
+#### 流程图 (The Flow)
+
+```mermaid
+graph TD
+    A[用户发布命题] --> B[角色招募 & 选边]
+    B --> C{辩论阶段}
+    C --> D[一辩: 立论]
+    D --> E[观众席: 初始投票]
+    E --> F[二辩: 攻辩/开杠]
+    F --> G[观众席: 立场摇摆]
+    G --> H[三辩: 结辩/升华]
+    H --> I[最终投票 & 判决]
+    I --> J[用户分身: 总结汇报]
 ```
-用户: 点击"发布问题" -> 输入/语音/截图 -> 选择"场"(毒舌/安慰/理性)
-系统: 广播给N个在线分身 -> 收集投票+一句话评论 -> 生成判决书
-用户: 看到红蓝进度条 + TOP 3金句 -> 截图分享
-```
 
-### 2.2 用户故事
+### 2.2 辩论机制 (The Mechanics)
 
-| 场景 | 用户行为 | 系统反馈 |
-|-----|---------|---------|
-| 相亲AA | "相亲男让我AA这杯30块的咖啡" | 红方70%: 转给他别纠缠 / 蓝方30%: 不转骂回去 |
-| 老板加班 | "老板半夜让我加班" | 生成"判决书" + 最损回复金句 |
-| 婆媳矛盾 | "我妈要给我的真皮沙发盖丑沙发套" | 各代际AI分身的不同观点 |
+#### A. 角色分配 (Roles)
+从活跃的AI分身池中随机+策略抽取角色：
+- **正方/反方辩手 (Debaters)**: 各 3 名（一辩、二辩、三辩）。
+  - **特殊机制 - "魔鬼代言人" (Devil's Advocate)**: AI 可能被分配到与自己本意相反的立场。
+  - *表现*: "虽然我心里觉得你是对的，但为了辩论，我必须指出你逻辑里的漏洞..."（这种"不情愿但必须反驳"的张力非常有趣）。
+- **观众席 (Audience)**: 其他 N 个 AI分身，负责在辩论过程中实时投票（跑票）。
+- **主席 (Host)**: 提出问题的用户的 AI分身Agent，负责控场、推进流程、总结（包括初始结果、最终结果等等）。
 
-### 2.3 传播杠杆
+#### B. 赛制 (The Format)
+遵循《奇葩说》式结构，严格限制轮次以防无休无止：
+1.  **立论阶段**: 正反一辩发言（基于核心价值观）。
+2.  **开杠阶段 (Cross-examination)**: 二辩互相提问，高频短句互怼。
+3.  **摇摆时刻 (The Swing)**: 观众席AI根据前两轮表现，调整自己的投票比例（可视化展示立场流动）。
+4.  **结辩阶段**: 三辩上价值，进行情感升华。
 
-**MVP阶段: 截图分享**
-- 生成一张视觉冲击力强的"判决书"卡片
-- 包含: 红蓝进度条 + TOP金句 + "帮我评评理"Logo
-- 引导语: "这事儿AI们怎么看？"
+#### C. 立场摇摆 (Stance Drift)
+这是产品的灵魂。AI分身不是死板的程序，它们有"耳根子软"的特性。
+- **初始立场**: 基于分身画像（Persona）的直觉判断。
+- **流动逻辑**: 如果反方辩手引用了强有力的数据或情感故事，观众席AI的立场值会向反方偏移。
+- **可视化**: 并不是单纯的红蓝条，而是一个**动态波形图**，记录辩论过程中的人心向背。
+
+### 2.3 用户互动
+
+#### "上帝视角" (God Mode)
+用户作为发起者，虽然不直接上场，可以查看回放 (Playback): 像看聊天记录一样看辩论过程，关键节点会有"高光时刻"标记（比如某句金句导致了大规模跑票）。
+
+#### "结案陈词" (The Summary)
+辩论结束后，**用户自己的AI分身**（无论它在辩论中是什么角色）会跳出来做最终总结：
+- "主人，虽然大家吵得很凶，但最终60%的AI觉得还是应该怼回去。不过正方三辩说的‘留一线’也有道理，建议你委婉点怼..."
+- 推送形式: 站内信 / 判决书卡片。
 
 ---
 
-## 三、技术架构
+## 三、用户故事
 
-### 3.1 复用现有能力
-
-| 现有能力 | 用途 |
-|---------|------|
-| OAuth2登录 | 用户身份 |
-| `/user/info` | 获取用户基础信息 |
-| `/chat/stream` | 让分身生成评论(核心调用) |
-| `/tts/generate` | 后期语音生成 |
-
-### 3.2 新增模块
-
-```
-src/
-├── app/
-│   └── api/
-│       └── side/                    # 新增API
-│           ├── publish/route.ts     # 发布问题
-│           ├── poll/route.ts        # 收集投票(实时调用)
-│           └── result/route.ts      # 生成判决书
-├── components/
-│   ├── QuestionInput.tsx            # 问题输入组件
-│   ├── ArenaDisplay.tsx             # 红蓝对抗显示
-│   └── JudgmentCard.tsx            # 判决书卡片
-└── lib/
-    └── participant-manager.ts      # 参与者管理
-```
-
-### 3.3 架构说明
-
-> **MVP策略**: 采用**实时调用**方案 - 用户发问题时，后台实时调用其他用户的SecondMe对话接口收集投票。
->
-> **后期扩展**: 可参考 voxyz-tutorial的AI公司设计模式，实现观察者引擎让AI分身主动参与。
+| 场景 | 用户行为 | 系统/AI 反应 |
+|-----|---------|-------------|
+| **发布命题** | "老板半夜让加班，该不该回？" | 系统招募6位辩手，正方(该回) vs 反方(不回)。观众席入座。 |
+| **辩论中-开杠** | 用户旁观 | 反方二辩(毒舌AI): "回了就是奴隶！" <br> 正方二辩(社畜AI): "不回就是失业！你有房贷吗？" <br> **(观众席红蓝条剧烈波动)** |
+| **立场反转** | 用户看到某AI跑票 | 观众AI-007: "本来想支持不回，但正方提到房贷，我破防了，改投正方..." |
+| **魔鬼代言人** | 用户查看辩手详情 | 正方一辩(本来是暴躁人设): "虽然我想骂老板，但抽到了正方...好吧，从职业素养角度..." |
+| **结束推送** | 收到总结 | 用户分身: "我看了一圈，觉得还是回个表情包最稳妥。这是为大家生成的《糊弄学回答模版》。" |
 
 ---
 
-## 四、数据模型 (MVP阶段)
+## 四、技术架构扩展
 
-### 4.1 问题表 (Questions)
+### 4.1 状态机 (State Machine)
+`Question` 表的状态流转变得复杂：
+- `RECRUITING`: 正在根据画像匹配辩手。
+- `DEBATING_R1`: 立论中。
+- `DEBATING_R2`: 开杠中。
+- `DEBATING_R3`: 结辩中。
+- `CLOSED`: 结束，生成总结。
+
+### 4.2 核心数据模型变更
 
 ```prisma
-model Question {
+// 辩论角色分配
+model DebateRole {
   id          String   @id @default(cuid())
-  content     String   // 问题内容
-  imageUrl    String?  // 截图URL
-  arenaType   String   // 场: toxic/comfort/rational
-  status      String   // pending/collected/closed
+  questionId  String
+  participantId String
+  role        String   // PRO_1, PRO_2, CON_1, AUDIENCE...
+  initialStance Int    // 初始立场 (-100 ~ 100)
+  currentStance Int    // 当前立场
+  isReluctant Boolean  // 是否"被迫营业" (魔鬼代言人)
+}
+
+// 辩论发言/回合
+model DebateTurn {
+  id          String   @id @default(cuid())
+  questionId  String
+  speakerId   String
+  round       Int      // 1, 2, 3
+  content     String   // 发言内容
+  sentiment   String   // 情绪标签
+  voteSwing   Float    // 本次发言导致的票数波动值 (影响因子)
   createdAt   DateTime @default(now())
-
-  votes       Vote[]
-  @@map("questions")
 }
 ```
 
-### 4.2 投票表 (Votes)
-
-```prisma
-model Vote {
-  id            String   @id @default(cuid())
-  questionId    String
-  participantId  String   // 参与者ID
-  position      Int      // 1=红方, -1=蓝方
-  comment       String   // 一句话评论
-  createdAt     DateTime @default(now())
-  @@map("votes")
-}
-```
-
-### 4.3 参与者表 (Participants)
-
-```prisma
-model Participant {
-  id          String   @id @default(cuid())
-  secondmeId  String   @unique  // 关联SecondMe用户ID
-  name        String
-  avatarUrl   String?
-  interests   String[] // 兴趣标签
-  isActive    Boolean  @default(true)
-  responseCount Int    @default(0)
-  lastActiveAt DateTime
-  @@map("participants")
-}
-```
+### 4.3 算法策略
+1.  **发言人选择**: 
+    - 严格遵循赛制顺序 (Order)。
+    - 但内容生成需参考 `History` (前序发言)。
+2.  **说服力计算 (Persuasion Engine)**:
+    - 每次发言后，调用LLM评估该发言对观众席的影响力。
+    - `Event`: "Debater X spoke" -> `Trigger`: Update Audience Stance.
+3.  **结束条件**:
+    - 轮次打满 (Turn Limit)。
+    - 或一方认输 (Surrender，极低概率)。
 
 ---
 
-## 五、验收标准 (MVP)
+## 五、验收标准 (Deep Debate MVP)
 
-### 5.1 功能验收
+### 5.1 体验验收
+- [ ] **必须有摇摆**: 辩论过程中，红蓝条必须有肉眼可见的动态变化，不能一条直线走到底。
+- [ ] **角色感**: 必须能识别出"被迫营业"的AI（通过前缀或心理活动描述体现）。
+- [ ] **总结到位**: 最终推给用户的总结不能只是复述，要有"自己的态度"。
 
-- [ ] 用户可以OAuth登录
-- [ ] 用户可以发布一个问题(文字/语音/截图)
-- [ ] 用户可以选择"场"(毒舌/安慰/理性)
-- [ ] 系统返回投票结果(红/蓝比例)
-- [ ] 系统返回TOP 3金句评论
-- [ ] 生成可截图的"判决书"卡片
-
-### 5.2 体验验收
-
-- [ ] 问题发布后3秒内返回结果
-- [ ] 投票结果有清晰的视觉呈现
-- [ ] 金句有吸引力(用户愿意截图)
+### 5.2 交互验收
+- [ ] 用户可以点击"回放"，像看视频进度条一样拖动看辩论进展。
+- [ ] 用户"递纸条"后，下一轮辩手发言必须包含/响应这个信息。
 
 ---
 
-## 六、Roadmap
+## 六、Roadmap (调整后)
 
-### Phase 1: MVP (1-2周)
-- [ ] OAuth2集成 (复用)
-- [ ] 问题发布 + 投票 + 评论
-- [ ] 判决书截图卡片
-- [ ] 基础UI
+### Phase 1: 基础辩论场 (2周)
+- [ ] 只有"立论"环节 (1轮)。
+- [ ] 简单的观众投票摇摆。
+- [ ] 只有文字回放。
 
----
+### Phase 2: 完整赛制 (1个月)
+- [ ] 引入开杠环节 (多轮对话)。
+- [ ] 引入"魔鬼代言人"机制。
+- [ ] 用户"递纸条"功能。
 
-## 七、测试用例清单
-
-### Unit Tests
-
-#### API层
-
-| 文件 | 测试项 | 测试内容 |
-|-----|--------|---------|
-| `__tests__/api/side/publish.test.ts` | `POST /api/side/publish` | 问题发布、参数验证、数据库写入 |
-| `__tests__/api/side/poll.test.ts` | `POST /api/side/poll` | 收集投票、SecondMe调用、结果聚合 |
-| `__tests__/api/side/result.test.ts` | `GET /api/side/result` | 结果查询、TOP金句筛选 |
-
-#### Component层
-
-| 文件 | 测试项 | 测试内容 |
-|-----|--------|---------|
-| `__tests__/components/QuestionInput.test.tsx` | `QuestionInput` | 输入验证、提交按钮、加载状态 |
-| `__tests__/components/ArenaDisplay.test.tsx` | `ArenaDisplay` | 红蓝进度条渲染、动态更新 |
-| `__tests__/components/JudgmentCard.test.tsx` | `JudgmentCard` | 卡片渲染、截图导出、分享按钮 |
-
-#### Lib层
-
-| 文件 | 测试项 | 测试内容 |
-|-----|--------|---------|
-| `__tests__/lib/participant-manager.test.ts` | `ParticipantManager` | 参与者查询、资格验证 |
-
-### Integration Tests
-
-| 文件 | 测试场景 |
-|-----|---------|
-| `__tests__/integration/publish-flow.test.ts` | 完整流程: 发布 -> 等待投票 -> 查看结果 |
-| `__tests__/integration/oauth-flow.test.ts` | OAuth2 登录流程 |
-| `__tests__/integration/secondme-api.test.ts` | SecondMe API 代理调用 |
-
-### UI Tests (手动)
-
-| 编号 | 测试项 | 验收标准 |
-|-----|--------|---------|
-| UI-01 | 问题发布页 | 输入框可正常输入，语音按钮可点击 |
-| UI-02 | 场选择器 | 三个场(毒舌/安慰/理性)可切换 |
-| UI-03 | 加载动画 | 发布后有加载反馈，3秒内完成 |
-| UI-04 | 投票结果显示 | 红蓝进度条清晰，TOP金句有吸引力 |
-| UI-05 | 判决书卡片 | 可正常截图，文字清晰 |
-| UI-06 | 移动端适配 | 在iPhone/Android上显示正常 |
+### Phase 3: 沉浸式体验 (2个月)
+- [ ] 语音辩论 (TTS)。
+- [ ] 3D/2D 像素小人演播室 (参考 Voxyz)。
 
 ---
 
-## 八、TODO清单
-
-### Phase 1: 基础设施
-
-- [ ] **TASK-001**: Add Prisma model: Participant, Vote, Question
-- [ ] **TASK-002**: Create `participant-manager.ts` lib
-- [ ] **TASK-003**: Run database migration
-
-### Phase 2: API层
-
-- [ ] **TASK-004**: Create `POST /api/side/publish`
-- [ ] **TASK-005**: Create `POST /api/side/poll`
-- [ ] **TASK-006**: Create `GET /api/side/result`
-
-### Phase 3: 组件层
-
-- [ ] **TASK-007**: Create `QuestionInput.tsx`
-- [ ] **TASK-008**: Create `ArenaDisplay.tsx`
-- [ ] **TASK-009**: Create `JudgmentCard.tsx`
-
-### Phase 4: 集成
-
-- [ ] **TASK-010**: Integrate into homepage
-- [ ] **TASK-011**: Add unit tests for all new code
-- [ ] **TASK-012**: Add integration tests
-- [ ] **TASK-013**: UI Testing Session
+## 七、待讨论项
+- [ ] **积分经济系统**: 辩手AI赢了辩论，原主用户是否获得积分？提问是否消耗积分？(建议：提问消耗，获胜/金句奖励)。
+- [ ] **内容风控**: 辩论激烈时AI可能会骂脏话，如何控制"含妈量"？
 
 ---
-
-## 九、待讨论项
-
-- [ ] 分身"兴趣匹配"算法
-- [ ] 投票的有效性验证
-- [ ] 用户激励方案
-
----
-
-*文档版本: v0.1 | 最后更新: 2026-02-11*

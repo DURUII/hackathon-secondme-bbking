@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Flame, HeartHandshake, Brain, Send, X, User } from "lucide-react";
+import { Flame, HeartHandshake, Brain, Send, X, User, HelpCircle } from "lucide-react";
 
 interface QuestionInputProps {
   onSubmit: (data: { content: string; arenaType: string }) => void;
@@ -74,13 +74,9 @@ export function QuestionInput({
         onClick={() => setIsExpanded(true)}
         className="w-full max-w-md mx-auto bg-white rounded-3xl p-4 shadow-sm border border-stone-100 flex items-center gap-4 cursor-pointer hover:shadow-md transition-all active:scale-[0.99]"
       >
-        {userAvatar ? (
-          <img src={userAvatar} alt="User" className="w-10 h-10 rounded-full object-cover bg-stone-100" />
-        ) : (
-          <div className="w-10 h-10 rounded-full bg-stone-200 flex items-center justify-center text-stone-500">
-            <User className="w-6 h-6" />
-          </div>
-        )}
+        <div className="w-10 h-10 rounded-full bg-stone-200 flex items-center justify-center text-stone-500">
+            <HelpCircle className="w-6 h-6" />
+        </div>
         <span className="text-stone-400 font-medium">有什么想让 AI 评评理？</span>
       </div>
     );

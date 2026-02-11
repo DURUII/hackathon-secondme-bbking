@@ -97,7 +97,7 @@ npm test -- __tests__/components/QuestionInput.test.tsx
 | TASK-008 | 集成到首页 | `src/app/side/page.tsx` |
 | TASK-009 | 数据库迁移 | Supabase已创建表 |
 | TASK-010 | 运行测试 | 44/50通过 |
-| TASK-011 | UI/UX 重构 | `src/components/FeedCard.tsx`, `src/components/SideFeature.tsx` |
+| TASK-011 | UI/UX 重构 | `src/components/FeedCard.tsx`, `src/components/PilFeature.tsx` |
 | TASK-012 | 广场Feed流 | `GET /api/side/feed` |
 | TASK-013 | 新用户自动补票 | `POST /api/side/backfill` |
 | TASK-014 | 定时任务同步 | `GET /api/cron/sync` |
@@ -121,7 +121,7 @@ src/
 │   ├── QuestionInput.tsx            # 问题输入组件 (Refactored)
 │   ├── ArenaDisplay.tsx             # 红蓝对抗显示 (Refactored)
 │   ├── JudgmentCard.tsx             # 判决书卡片
-│   ├── SideFeature.tsx              # 辩论广场入口 (Refactored)
+│   ├── PilFeature.tsx              # 辩论广场入口 (Refactored)
 │   └── FeedCard.tsx                 # Feed流卡片 (New)
 ├── lib/
 │   ├── participant-manager.ts       # 参与者管理
@@ -184,92 +184,50 @@ model Participant {
 ```
 用户发布问题
     ↓
-POST /api/side/publish → 创建Question (status: pending)
+POST /api/publish → 创建Question (status: pending)
     ↓
-POST /api/side/poll → 遍历Participants → 调用SecondMe API → 创建Vote → 更新status
+POST /api/cron/heartbeat → 真实用户驱动引擎 (Recruiting -> Debating)
     ↓
-GET /api/side/feed → 返回Feed流数据 (实时 + 历史)
+GET /api/feed → 返回Feed流数据 (实时 + 历史)
     ↓
-Frontend → 乐观更新 UI (FeedCard)
-    ↓
-Background Cron (/api/cron/sync) → 补齐缺失的AI投票 (每10分钟)
+Frontend → 实时轮询 (模拟WebSocket)
 ```
 
 ---
 
-## 开发中: "帮我评评理" 辩论广场
+## 开发中: "帮我评评理" 辩论广场 (Deep Debate Edition)
 
-**产品定位**: AI分身辩论广场，MVP功能:
-- 用户发布问题 -> AI分身投票+评论 -> 生成判决书截图
-
-**PRD文档**: `docs/SIDE-PRD.md`
+**产品定位**: 真实用户驱动的 AI 分身辩论广场。
+**当前状态**: 已移除 Mock，完全依赖真实用户 (需 6 人成团)。
 
 ### 最新修复 (2026-02-11)
 
 | 问题 | 修复 |
 |-----|------|
-| FK约束导致publish失败 | 删除外键约束，columns设为nullable |
-| 无真实token时无法投票 | 添加Mock投票模式，开发环境自动生成模拟回复 |
-| 新用户无历史数据 | 添加 `/api/side/backfill` 自动为新用户补投最近10个问题 |
-| 大规模并发超时 | 引入 `/api/cron/sync` 定时任务，后台异步补齐投票 |
+| 路径冗余 | 移除 `/api/side/` 前缀，API 扁平化至 `/api/` |
+| 真实性 | 移除 Mock 辩手，实现 `Heartbeat` 引擎调度真实 AI 分身 |
+| 实时性 | 前端增加心跳触发器，实现伪实时直播体验 |
+| **User Table Empty** | 修复 `auth-helper` 使用 Mock 数据的 Bug，现在会拉取真实 UserInfo 并存入 DB |
 
-### Mock投票模式
+### 新增文件清单
 
-开发环境下，当参与者没有有效token时，自动生成模拟投票：
-
-```typescript
-// src/lib/secondme-poll-engine.ts
-const mockResponses = {
-  toxic: [
-    { position: 1, comment: '转给他，别惯着，这种人不处也罢' },
-    { position: 1, comment: '30块都不肯付？拜拜了您嘞' },
-    ...
-  ],
-  comfort: [...],
-  rational: [...]
-};
+```
+src/
+├── app/
+│   └── api/
+│       ├── publish/route.ts     # 发布问题
+│       ├── feed/route.ts        # 广场Feed流
+│       ├── cron/
+│       │   └── heartbeat/route.ts # 核心辩论引擎 (New)
+│       └── admin/
+│           └── seed/route.ts    # 数据预埋 (Updated: Clears DB first)
+├── components/
+│   ├── ArenaDisplay.tsx         # 辩论直播组件 (Updated)
+│   └── SideFeature.tsx          # 主功能入口 (Updated)
+└── lib/
+    └── debate-engine.ts         # 辩论逻辑核心 (New)
 ```
 
-### 测试数据
-
-| 表 | 数据量 |
-|---|-------|
-| users | 1 (demo-user) |
-| participants | 8 (预设Mock分身 + 真实用户) |
-| questions | 4 (预设热门话题) |
-| votes | 30+ |
-
-### 测试方法
-
-```bash
-# 启动开发服务器
-npm run dev
-
-# 访问
-# http://localhost:3000/side
-# 点击"发布问题"即可看到完整流程
-```
-
-### UI 测试清单
-
-| 编号 | 测试项 | 验收标准 | 状态 |
-|-----|--------|---------|------|
-| UI-01 | 登录页 | 看到"帮我评评理"标题 + 三个场介绍 + 登录按钮 | 待测 |
-| UI-02 | 问题发布页 | 输入框可输入，选择场(毒舌/安慰/理性) | 待测 |
-| UI-03 | 发布问题 | 点击"发布问题"后显示加载动画 | 待测 |
-| UI-04 | 投票结果显示 | 红蓝进度条清晰显示，TOP金句可见 | 待测 |
-| UI-05 | 判决书卡片 | 暗黑风卡片设计，可点击复制/分享 | 待测 |
-| UI-06 | 移动端适配 | iPhone/Android上显示正常 | 待测 |
-
-### 测试命令
-
-```bash
-# 启动开发服务器
-npm run dev
-
-# 访问
-# http://localhost:3000/side
-```
 
 ---
 

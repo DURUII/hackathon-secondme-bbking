@@ -50,3 +50,5 @@ next-env.d.ts
 
 .agents/
 **/*.DS_Store
+/.trae
+/.trae

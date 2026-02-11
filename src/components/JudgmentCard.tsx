@@ -68,7 +68,7 @@ export function JudgmentCard({
 
         {/* Results */}
         <div className="p-6 space-y-4">
-          {/* Red Side */}
+          {/* Red Pil */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -99,7 +99,7 @@ export function JudgmentCard({
           {/* Divider */}
           <div className="border-t border-gray-700 my-4" />
 
-          {/* Blue Side */}
+          {/* Blue Pil */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

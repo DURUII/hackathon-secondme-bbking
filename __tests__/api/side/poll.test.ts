@@ -40,7 +40,7 @@ vi.mock('@/lib/vote-manager', () => ({
 }));
 
 // Import after mocking
-const { POST } = await import('@/app/api/side/poll/route');
+const { POST } = await import('@/app/api/poll/route');
 
 describe('POST /api/side/poll', () => {
   beforeEach(() => {
