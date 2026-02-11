@@ -23,9 +23,12 @@ export class DebateEngine {
 
     // MVP Requirement: Need at least 2 participants (or just the question owner)
     // Check if question owner is available as a participant
-    const questionOwner = await db.participant.findFirst({
-      where: { secondmeId: q.user?.secondmeUserId }
-    });
+    const question = pendingQuestions[0];
+    const questionOwner = question.userId
+      ? await db.participant.findFirst({
+          where: { secondmeId: question.userId }
+        })
+      : null;
 
     // For MVP: If we have at least 1 participant and the question owner, we can start
     // This allows single-user testing while still having a "debate"
@@ -36,8 +39,6 @@ export class DebateEngine {
       return { recruited: 0, waitingFor: minParticipants - participants.length };
     }
 
-    const question = pendingQuestions[0];
-    
     // Shuffle and pick 6
     const shuffled = participants.sort(() => 0.5 - Math.random()).slice(0, 6);
     

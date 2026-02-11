@@ -36,6 +36,7 @@ export function ArenaDisplay({
   blueRatio = 0,
   topRedComments = [],
   topBlueComments = [],
+  debateTurns = [],
   onViewResult,
 }: ArenaDisplayProps) {
   const config = ARENA_CONFIG[arenaType as keyof typeof ARENA_CONFIG] || ARENA_CONFIG.toxic;

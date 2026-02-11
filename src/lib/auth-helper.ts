@@ -8,7 +8,7 @@ export interface TokenUser {
   secondmeUserId: string;
   accessToken: string;
   name?: string;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
 }
 
 /**
@@ -63,7 +63,7 @@ export async function getUserFromToken(): Promise<TokenUser | null> {
       return null;
     }
 
-    const json = await readJsonOrText(result.resp);
+    const json = await readJsonOrText(result.resp) as { data?: { id: string; name?: string; nickname?: string; avatar?: string; avatarUrl?: string } } | undefined;
     const userInfo = json?.data;
     
     if (!userInfo || !userInfo.id) {
