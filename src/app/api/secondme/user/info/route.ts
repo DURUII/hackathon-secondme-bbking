@@ -4,14 +4,6 @@ import { readJsonOrText } from "@/lib/secondme-http";
 import { db } from "@/lib/db";
 import { getSecondMeAccessToken } from "@/lib/secondme-server";
 
-interface SecondMeUserInfo {
-  id: string;
-  name?: string;
-  nickname?: string;
-  avatar?: string;
-  avatarUrl?: string;
-}
-
 export async function GET() {
   const requestId = crypto.randomUUID().slice(0, 8);
   const logPrefix = `[SecondMe Proxy UserInfo][${requestId}]`;
@@ -23,7 +15,7 @@ export async function GET() {
     return NextResponse.json(result.error, { status: result.status });
   }
 
-  const json = (await readJsonOrText(result.resp)) as { data?: SecondMeUserInfo } | undefined;
+  const json = await readJsonOrText(result.resp) as { data?: { id: string; name?: string; nickname?: string; avatar?: string; avatarUrl?: string } } | undefined;
 
   // --- Auto-Sync User to Database ---
   if (result.ok && json?.data?.id) {
