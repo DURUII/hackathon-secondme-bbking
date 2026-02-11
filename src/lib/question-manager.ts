@@ -1,8 +1,9 @@
 export interface CreateQuestionInput {
-  userId: string;
+  userId?: string | null;
   content: string;
   arenaType?: string;
   imageUrl?: string;
+  status?: string;
 }
 
 export class QuestionManager {
@@ -18,7 +19,7 @@ export class QuestionManager {
         content: input.content,
         arenaType: input.arenaType ?? 'toxic',
         imageUrl: input.imageUrl ?? null,
-        status: 'pending',
+        status: input.status ?? 'pending',
       },
     });
   }

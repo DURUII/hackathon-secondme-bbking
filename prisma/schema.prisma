@@ -17,8 +17,6 @@ model User {
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   sessions          Session[]
-  questions         Question[]
-  votes             Vote[]
 
   @@map("users")
 }
