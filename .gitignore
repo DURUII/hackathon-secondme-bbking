@@ -47,3 +47,6 @@ prisma/*.db-journal
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.agents/
+**/*.DS_Store
