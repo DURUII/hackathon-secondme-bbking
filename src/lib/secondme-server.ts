@@ -37,11 +37,27 @@ export async function secondMeFetch(
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${accessToken}`);
 
-  const resp = await fetch(endpoint, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(endpoint, {
+      ...init,
+      headers,
+      cache: "no-store",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    resp = new Response(
+      JSON.stringify({
+        code: 502,
+        message: `Upstream request failed: ${message}`,
+        data: { endpoint },
+      }),
+      {
+        status: 502,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      }
+    );
+  }
 
   return { hasAuth: true as const, ok: resp.ok, status: resp.status, resp, accessToken };
 }
