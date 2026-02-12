@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { secondMeFetch } from "@/lib/secondme-server";
+import { secondMeFetch, getRedirectUri } from "@/lib/secondme-server";
 import { readJsonOrText } from "@/lib/secondme-http";
 
 type TokenResponse = {
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
 
   const clientId = process.env.SECONDME_CLIENT_ID;
   const clientSecret = process.env.SECONDME_CLIENT_SECRET;
-  const redirectUri = process.env.SECONDME_REDIRECT_URI;
+  const redirectUri = getRedirectUri();
   const configuredTokenEndpoint = process.env.SECONDME_TOKEN_ENDPOINT;
   const officialTokenEndpoint = "https://app.mindos.com/gate/lab/api/oauth/token/code";
 

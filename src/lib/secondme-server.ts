@@ -4,6 +4,18 @@ export function getSecondMeApiBaseUrl() {
   return process.env.SECONDME_API_BASE_URL || "https://app.mindos.com/gate/lab";
 }
 
+export function getRedirectUri(): string {
+  if (process.env.VERCEL) {
+    // Vercel 生产环境: 使用环境变量自动检测
+    const host = process.env.VERCEL_URL || process.env.NEXT_PUBLIC_VERCEL_URL;
+    if (host) {
+      return `https://${host}/api/auth/callback`;
+    }
+  }
+  // 本地开发或回退
+  return process.env.SECONDME_REDIRECT_URI || "http://localhost:3000/api/auth/callback";
+}
+
 export async function getSecondMeAccessToken() {
   const cookieStore = await cookies();
   return cookieStore.get("secondme_access_token")?.value;

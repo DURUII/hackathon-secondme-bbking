@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ALLOWED_SECONDME_SCOPES, DEFAULT_SECONDME_SCOPES } from "@/lib/secondme-scopes";
+import { getRedirectUri } from "@/lib/secondme-server";
 
 function mask(value: string | undefined) {
   if (!value) return "<empty>";
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
   });
 
   const clientId = process.env.SECONDME_CLIENT_ID;
-  const redirectUri = process.env.SECONDME_REDIRECT_URI;
+  const redirectUri = getRedirectUri();
   const rawScope = currentUrl.searchParams.get("scope");
   const { scope, usedDefault, requestedScopes, invalidScopes } = resolveScopes(rawScope);
   const state = crypto.randomUUID();
