@@ -477,28 +477,28 @@ export default function UserProfile() {
   }
 
   if (loading) {
-    return <div className="rounded-md border bg-white p-4">Loading profile...</div>;
+    return <div className="border border-stone-800 bg-black p-4 text-white font-mono">LOADING_PROFILE...</div>;
   }
 
   if (error) {
     return (
-      <section className="rounded-md border bg-white p-4 text-left shadow-sm">
-        <h2 className="mb-2 text-lg font-semibold text-gray-900">无法读取用户信息</h2>
-        <p className="text-sm text-gray-600">{error}</p>
+      <section className="border border-[#FF3300] bg-black p-4 text-left shadow-[4px_4px_0px_0px_rgba(255,51,0,0.2)]">
+        <h2 className="mb-2 text-lg font-black text-[#FF3300] uppercase italic">ERROR: PROFILE_LOAD_FAILED</h2>
+        <p className="text-sm text-stone-400 font-mono">{error}</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <a
             href="/api/debug/api-map"
-            className="inline-flex rounded-md border px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-100"
+            className="inline-flex border border-stone-700 bg-black px-3 py-1.5 text-sm text-stone-300 font-mono hover:bg-stone-900 uppercase"
             target="_blank"
             rel="noreferrer"
           >
-            查看 API Map(JSON)
+            DEBUG_API_MAP
           </a>
           <a
             href="/api/auth/logout"
-            className="inline-flex rounded-md border px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-100"
+            className="inline-flex border border-stone-700 bg-black px-3 py-1.5 text-sm text-stone-300 font-mono hover:bg-stone-900 uppercase"
           >
-            Logout
+            LOGOUT_SEQUENCE
           </a>
         </div>
       </section>
@@ -506,55 +506,55 @@ export default function UserProfile() {
   }
 
   return (
-    <section className="rounded-md border bg-white p-4 text-left shadow-sm">
+    <section className="border-2 border-stone-800 bg-black p-4 text-left shadow-[8px_8px_0px_0px_rgba(255,255,255,0.1)]">
       <div className="flex items-start gap-3">
         {user?.avatar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={user.avatar}
             alt="avatar"
-            className="h-12 w-12 rounded-full border object-cover"
+            className="h-12 w-12 border border-stone-600 object-cover grayscale contrast-125"
             referrerPolicy="no-referrer"
           />
         ) : (
-          <div className="h-12 w-12 rounded-full border bg-gray-100" />
+          <div className="h-12 w-12 border border-stone-600 bg-stone-900" />
         )}
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-gray-900">{user?.name ?? "SecondMe User"}</h2>
+          <h2 className="text-lg font-black text-white italic tracking-wide">{user?.name ?? "UNKNOWN_USER"}</h2>
           {user?.email ? (
-            <p className="text-sm text-gray-600">{user.email}</p>
+            <p className="text-sm text-stone-500 font-mono">{user.email}</p>
           ) : (
-            <p className="text-sm text-gray-500">未返回邮箱（可能未授权 user.info 或上游未提供）</p>
+            <p className="text-sm text-stone-600 font-mono">NO_EMAIL_DATA</p>
           )}
         </div>
       </div>
 
-      <p className="mt-2 text-sm text-gray-600">{user?.bio ?? "暂无简介"}</p>
+      <p className="mt-2 text-sm text-stone-400 font-mono border-l-2 border-stone-800 pl-2 italic">{user?.bio ?? "NO_BIO_AVAILABLE"}</p>
 
-      <div className="mt-4">
-        <h3 className="text-sm font-semibold text-gray-900">软记忆（Top 10）</h3>
+      <div className="mt-6">
+        <h3 className="text-sm font-bold text-[#FFFF00] font-mono uppercase border-b border-stone-800 pb-1 mb-2">SOFT_MEMORY_MODULE [TOP_10]</h3>
         {softMemory.length > 0 ? (
           <ul className="mt-2 space-y-2">
             {softMemory.slice(0, 10).map((item, idx) => (
-              <li key={idx} className="rounded-md border bg-gray-50 p-2">
-                <div className="text-xs font-medium text-gray-900">{item.factObject ?? "记忆"}</div>
-                <div className="mt-1 text-xs text-gray-700">{item.factContent ?? "(empty)"}</div>
+              <li key={idx} className="border border-stone-800 bg-stone-900/50 p-2 font-mono">
+                <div className="text-xs font-bold text-white uppercase">{item.factObject ?? "MEMORY_NODE"}</div>
+                <div className="mt-1 text-xs text-stone-400">{item.factContent ?? "(EMPTY_DATA)"}</div>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-2 text-xs text-gray-500">暂无软记忆数据（可能未授权 user.info.softmemory）</p>
+          <p className="mt-2 text-xs text-stone-600 font-mono">NO_MEMORY_DATA_FOUND</p>
         )}
       </div>
 
-      <div className="mt-4">
-        <h3 className="text-sm font-semibold text-gray-900">兴趣标签</h3>
+      <div className="mt-6">
+        <h3 className="text-sm font-bold text-[#FFFF00] font-mono uppercase border-b border-stone-800 pb-1 mb-2">INTEREST_TAGS</h3>
         {shades.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {shades.slice(0, 20).map((item, idx) => (
               <span
                 key={idx}
-                className="inline-flex items-center rounded-full border bg-white px-2 py-1 text-xs text-gray-700"
+                className="inline-flex items-center border border-stone-700 bg-black px-2 py-1 text-xs text-stone-300 font-mono hover:border-white transition-colors"
                 title={item.description || ""}
               >
                 {item.shadeIcon ?? item.shadeIconPublic ?? ""}
@@ -566,54 +566,54 @@ export default function UserProfile() {
                   item.label ??
                   item.tagName ??
                   item.displayName ??
-                  `tag-${idx + 1}`}
-                {item.confidenceLevel ? ` · ${item.confidenceLevel}` : ""}
+                  `TAG_${idx + 1}`}
+                {item.confidenceLevel ? ` :: ${item.confidenceLevel}` : ""}
               </span>
             ))}
           </div>
         ) : (
-          <p className="mt-2 text-xs text-gray-500">暂无兴趣标签（可能未授权 user.info.shades）</p>
+          <p className="mt-2 text-xs text-stone-600 font-mono">NO_TAGS_DETECTED</p>
         )}
       </div>
 
-      <div className="mt-5 rounded-md border bg-gray-50 p-3">
+      <div className="mt-6 border border-stone-800 bg-stone-900/30 p-3">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-gray-900">流式对话 + TTS</h3>
+          <h3 className="text-sm font-bold text-[#FFFF00] font-mono uppercase">CHAT_STREAM + TTS_ENGINE</h3>
           {chatSessionId ? (
-            <span className="rounded-full border bg-white px-2 py-0.5 text-[11px] text-gray-600">
-              session: {chatSessionId.slice(0, 12)}...
+            <span className="border border-stone-700 bg-black px-2 py-0.5 text-[10px] text-stone-500 font-mono">
+              SESSION_ID: {chatSessionId.slice(0, 8)}...
             </span>
           ) : null}
         </div>
-        <p className="mt-1 text-xs text-gray-500">Enter 发送，Shift+Enter 换行。AI 回复支持一键转语音。</p>
+        <p className="mt-1 text-xs text-stone-600 font-mono">CMD: ENTER=SEND | SHIFT+ENTER=NEWLINE</p>
 
-        <div className="mt-3 max-h-72 space-y-2 overflow-auto rounded-md border bg-white p-2">
+        <div className="mt-3 max-h-72 space-y-2 overflow-auto border border-stone-800 bg-black p-2 font-mono">
           {chatMessages.length > 0 ? (
             chatMessages.map((item) => (
               <div
                 key={item.id}
-                className={`rounded-md px-3 py-2 text-sm ${
-                  item.role === "user" ? "bg-gray-900 text-white" : "border bg-gray-50 text-gray-800"
+                className={`p-2 text-sm border-l-2 ${
+                  item.role === "user" ? "border-[#FFFF00] text-stone-300 pl-3" : "border-[#0033FF] text-[#0033FF] pl-3"
                 }`}
               >
-                <div className="mb-1 text-[11px] opacity-70">
-                  {item.role === "user" ? "You" : "SecondMe"}
+                <div className="mb-1 text-[10px] opacity-50 uppercase tracking-wider">
+                  {item.role === "user" ? "USER_INPUT" : "SYSTEM_RESPONSE"}
                 </div>
                 <div className="whitespace-pre-wrap break-words">{item.content || "..."}</div>
                 {item.role === "assistant" && item.content.trim().length > 0 ? (
                   <button
                     type="button"
-                    className="mt-2 inline-flex rounded-md border bg-white px-2 py-1 text-xs text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-2 inline-flex border border-stone-700 bg-black px-2 py-1 text-[10px] text-stone-400 hover:text-white hover:border-white transition-colors uppercase"
                     disabled={Boolean(ttsLoadingId)}
                     onClick={() => void handleTts(item.id, item.content)}
                   >
-                    {ttsLoadingId === item.id ? "语音生成中..." : "转语音"}
+                    {ttsLoadingId === item.id ? "GENERATING_AUDIO..." : "GENERATE_TTS"}
                   </button>
                 ) : null}
               </div>
             ))
           ) : (
-            <p className="text-xs text-gray-500">还没有消息，先发一条试试。</p>
+            <p className="text-xs text-stone-600 italic">WAITING_FOR_INPUT...</p>
           )}
         </div>
 
@@ -622,28 +622,28 @@ export default function UserProfile() {
             value={chatInput}
             onChange={(event) => setChatInput(event.target.value)}
             onKeyDown={handleChatInputKeyDown}
-            className="h-20 w-full rounded-md border p-2 text-sm outline-none ring-0 focus:border-gray-500"
-            placeholder="输入要发送给 SecondMe 的消息..."
+            className="h-20 w-full border border-stone-700 bg-black p-2 text-sm text-white font-mono outline-none focus:border-[#FFFF00] placeholder:text-stone-700"
+            placeholder="> INPUT_MESSAGE_HERE..."
           />
           <div className="mt-2 flex items-center justify-between gap-2">
-            <div className="text-xs text-red-600">{chatError ?? ttsError ?? ""}</div>
+            <div className="text-xs text-[#FF3300] font-mono uppercase">{chatError ?? ttsError ?? ""}</div>
             <button
               type="button"
               onClick={() => void handleSendChat()}
               disabled={chatSending || !chatInput.trim()}
-              className="inline-flex rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex bg-[#FFFF00] px-4 py-1.5 text-sm font-black text-black uppercase hover:bg-[#E6E600] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {chatSending ? "发送中..." : "发送"}
+              {chatSending ? "SENDING..." : "EXECUTE"}
             </button>
           </div>
         </div>
 
         {ttsAudioUrl ? (
-          <div className="mt-3 rounded-md border bg-white p-2">
-            <div className="mb-1 text-xs text-gray-600">
-              语音预览{ttsAudioMessageId ? ` (message: ${ttsAudioMessageId.slice(0, 8)})` : ""}
+          <div className="mt-3 border border-stone-800 bg-black p-2">
+            <div className="mb-1 text-xs text-stone-500 font-mono uppercase">
+              AUDIO_PREVIEW {ttsAudioMessageId ? `[MSG:${ttsAudioMessageId.slice(0, 4)}]` : ""}
             </div>
-            <audio ref={audioRef} controls src={ttsAudioUrl} className="w-full" />
+            <audio ref={audioRef} controls src={ttsAudioUrl} className="w-full h-8" />
           </div>
         ) : null}
       </div>
@@ -651,17 +651,17 @@ export default function UserProfile() {
       <div className="mt-4 flex flex-wrap gap-2">
         <a
           href="/api/debug/api-map"
-          className="inline-flex rounded-md border px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-100"
+          className="inline-flex border border-stone-700 bg-black px-3 py-1.5 text-sm text-stone-400 font-mono hover:text-white hover:border-white transition-colors uppercase"
           target="_blank"
           rel="noreferrer"
         >
-          查看 API Map(JSON)
+          VIEW_API_MAP
         </a>
         <a
           href="/api/auth/logout"
-          className="inline-flex rounded-md border px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-100"
+          className="inline-flex border border-stone-700 bg-black px-3 py-1.5 text-sm text-stone-400 font-mono hover:text-white hover:border-white transition-colors uppercase"
         >
-          Logout
+          LOGOUT
         </a>
       </div>
     </section>

@@ -1,23 +1,48 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'WenYueXinQingNianTi';
+  src: url('/font/WenYueXinQingNianTi/WenYue-XinQingNianTi-W8-J-2.otf') format('opentype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'AccidentalPresidency';
+  src: url('/font/AccidentalPresidency.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-wenyue {
+  font-family: 'WenYueXinQingNianTi', sans-serif;
+}
+
+.font-accidental {
+  font-family: 'AccidentalPresidency', sans-serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #121212;
+  --foreground: #ededed;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans:
-    "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI",
+    "WenYueXinQingNianTi", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono:
     "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-display: 'WenYueXinQingNianTi', sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    --background: #121212;
     --foreground: #ededed;
   }
 }
@@ -25,5 +50,16 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
 }
+
+/* Explicitly target common utility classes to ensure override */
+.font-sans, .text-xs, .text-sm, .text-base, .text-lg, .text-xl, .text-2xl, span, button, div, p, h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-sans);
+}
+
+/* Display font for titles */
+.font-display {
+  font-family: var(--font-display);
+}
+

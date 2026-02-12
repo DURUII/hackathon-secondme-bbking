@@ -104,9 +104,25 @@ export async function GET() {
       const previewComments = q.votes.slice(0, 2).map(v => {
         const p = v.participantId ? participantMap.get(v.participantId) : null;
         return {
+          id: v.id,
           name: p?.name || '匿名分身',
+          avatarUrl: p?.avatarUrl,
           content: v.comment,
-          side: v.position === 1 ? 'red' as const : 'blue' as const
+          side: v.position === 1 ? 'red' as const : 'blue' as const,
+          tags: p?.interests || []
+        };
+      });
+
+      // Get all comments structured
+      const structuredComments = q.votes.map(v => {
+        const p = v.participantId ? participantMap.get(v.participantId) : null;
+        return {
+          id: v.id,
+          name: p?.name || '匿名分身',
+          avatarUrl: p?.avatarUrl,
+          content: v.comment,
+          side: v.position === 1 ? 'red' as const : 'blue' as const,
+          tags: p?.interests || []
         };
       });
 
@@ -153,6 +169,7 @@ export async function GET() {
         commentCount: totalVotes,
         debateTurns: [],
         previewComments,
+        structuredComments,
         fullComments: {
           red: redComments,
           blue: blueComments

@@ -38,6 +38,14 @@ interface FeedItem {
     content: string;
     side: "red" | "blue";
   }>;
+  structuredComments?: Array<{
+    id: string;
+    name: string;
+    avatarUrl?: string;
+    content: string;
+    side: "red" | "blue";
+    tags?: string[];
+  }>;
   fullComments: {
     red: string[];
     blue: string[];
@@ -55,26 +63,9 @@ export default function PilFeature() {
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
   const [stats, setStats] = useState({ totalParticipants: 0, totalQuestions: 0 });
   const [activeTab, setActiveTab] = useState<FeedTab>("all");
-  const [subscribedIds, setSubscribedIds] = useState<string[]>([]);
   const publishInFlightRef = useRef(false);
 
   const userName = userInfo?.name;
-
-  const fetchSubscriptions = useCallback(async () => {
-    try {
-      const res = await fetch("/api/subscription", { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.success) {
-        const ids = Array.isArray(data.data?.questionIds)
-          ? data.data.questionIds.filter((id: unknown) => typeof id === "string")
-          : [];
-        setSubscribedIds(ids);
-      }
-    } catch (error) {
-      console.error("Failed to fetch subscriptions", error);
-    }
-  }, []);
 
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
@@ -142,55 +133,14 @@ export default function PilFeature() {
     fetchFeed();
   }, [fetchFeed]);
 
-  useEffect(() => {
-    fetchSubscriptions();
-  }, [fetchSubscriptions]);
-
-  const setSubscribed = useCallback(async (questionId: string, subscribed: boolean) => {
-    setSubscribedIds((prev) => {
-      if (subscribed) {
-        return prev.includes(questionId) ? prev : [...prev, questionId];
-      }
-      return prev.filter((id) => id !== questionId);
-    });
-
-    try {
-      const res = await fetch("/api/subscription", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId, subscribed }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-    } catch (error) {
-      setSubscribedIds((prev) => {
-        if (subscribed) {
-          return prev.filter((id) => id !== questionId);
-        }
-        return prev.includes(questionId) ? prev : [...prev, questionId];
-      });
-      console.error("Failed to update subscription", error);
-      alert("关注状态更新失败，请重试");
-    }
-  }, []);
-
-  const toggleSubscribed = useCallback((questionId: string) => {
-    const isSubscribed = subscribedIds.includes(questionId);
-    setSubscribed(questionId, !isSubscribed);
-  }, [setSubscribed, subscribedIds]);
-
   const handleDeleteQuestion = useCallback(async (questionId: string) => {
     const ok = window.confirm("确认删除这个问题？删除后不会在列表展示。");
     if (!ok) return;
 
     const prevFeedItems = feedItems;
     const prevExpandedId = expandedId;
-    const prevSubscribedIds = subscribedIds;
 
     setFeedItems((prev) => prev.filter((item) => item.id !== questionId));
-    setSubscribedIds((prev) => prev.filter((id) => id !== questionId));
     setExpandedId((prev) => (prev === questionId ? null : prev));
 
     try {
@@ -206,11 +156,10 @@ export default function PilFeature() {
     } catch (error) {
       setFeedItems(prevFeedItems);
       setExpandedId(prevExpandedId);
-      setSubscribedIds(prevSubscribedIds);
       console.error("Failed to delete question", error);
       alert("删除失败，请重试");
     }
-  }, [expandedId, feedItems, subscribedIds]);
+  }, [expandedId, feedItems]);
 
   // Fetch User Info
   useEffect(() => {
@@ -219,9 +168,8 @@ export default function PilFeature() {
         const userRes = await fetch("/api/secondme/user/info");
         const userData = await userRes.json();
 
-        // Unauthorized - redirect to login
+        // Unauthorized - do not redirect, just leave userInfo null
         if (userRes.status === 401 || userData.code === 401) {
-          window.location.href = "/api/auth/login";
           return;
         }
 
@@ -241,23 +189,25 @@ export default function PilFeature() {
           }
           // Trigger backfill for new/existing participant to vote on recent questions
           fetch("/api/backfill", { method: "POST" }).catch(console.error);
-          fetchSubscriptions();
         }
       } catch (error) {
         console.error("Failed to fetch user info", error);
-        // Network error - redirect to login
-        window.location.href = "/api/auth/login";
       }
     }
     fetchUserInfo();
-  }, [fetchSubscriptions]);
+  }, []);
 
   // Removed redundant definition of fetchFeed here (it was moved up)
   // const fetchFeed = useCallback(...) 
 
   // Initial Fetch moved to up too
 
-  const handlePublish = async (data: { content: string; arenaType: string }) => {
+  const handlePublish = async (data: { content: string }) => {
+    if (!currentUserId) {
+      window.location.href = "/api/auth/login";
+      return;
+    }
+
     if (publishInFlightRef.current) {
       return;
     }
@@ -274,7 +224,7 @@ export default function PilFeature() {
       creatorUserId: currentUserId,
       timeAgo: "刚刚",
       content: data.content,
-      arenaType: data.arenaType as any,
+      arenaType: "toxic",
       status: "pending",
       redVotes: 0,
       blueVotes: 0,
@@ -282,6 +232,7 @@ export default function PilFeature() {
       blueRatio: 0.5,
       commentCount: 0,
       previewComments: [],
+      structuredComments: [],
       fullComments: { red: [], blue: [] },
       debateTurns: [],
     };
@@ -343,29 +294,29 @@ export default function PilFeature() {
   const filteredFeedItems = feedItems.filter((item) => {
     if (activeTab === "all") return true;
     if (activeTab === "proposed") return Boolean(currentUserId && item.creatorUserId === currentUserId);
-    return subscribedIds.includes(item.id);
+    return true;
   });
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-20">
+    <div className="min-h-screen bg-[#121212] pb-20 font-sans">
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-stone-50/90 backdrop-blur-md border-b border-stone-100 px-4 py-3">
+      <header className="sticky top-0 z-10 bg-[#121212]/80 backdrop-blur-xl border-b border-white/5 px-4 py-4">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
              <div className="relative">
-               <h1 className="text-xl font-black tracking-tighter text-stone-900">
-                 BB King
+               <h1 className="text-2xl font-bold text-white font-display tracking-wide">
+                 奇葩说
                </h1>
-               <span className="absolute -top-2 -right-8 scale-75 origin-bottom-left text-[10px] font-bold text-white bg-stone-900 px-1.5 py-0.5 rounded-tr-md rounded-bl-md">
+               <span className="absolute -top-2 -right-6 scale-75 origin-bottom-left text-[10px] font-bold text-black bg-white px-1.5 py-0.5 rounded-full shadow-lg">
                  AI版
                </span>
              </div>
           </div>
-          <div className="w-8 h-8 rounded-full bg-stone-200 overflow-hidden">
+          <div className="w-9 h-9 rounded-full bg-white/5 border border-white/10 overflow-hidden">
             {userInfo?.avatarUrl ? (
               <img src={userInfo.avatarUrl} alt="User" className="w-full h-full object-cover" />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-stone-500">
+              <div className="w-full h-full flex items-center justify-center text-white/30">
                 <User className="w-4 h-4" />
               </div>
             )}
@@ -373,7 +324,7 @@ export default function PilFeature() {
         </div>
       </header>
 
-      <main className="max-w-md mx-auto px-4 pt-4 space-y-6">
+      <main className="max-w-md mx-auto px-4 pt-6 space-y-8">
         
         {/* Publisher */}
         <section>
@@ -386,20 +337,19 @@ export default function PilFeature() {
 
         {/* Square Feed */}
         <section>
-          <div className="flex items-center justify-between mb-4 pl-2 pr-2">
-            <div className="inline-flex p-1 rounded-full border border-stone-200 bg-white">
+          <div className="flex items-center justify-between mb-6">
+            <div className="inline-flex p-1 bg-white/5 rounded-lg border border-white/5">
               {[
-                { key: "all" as const, label: "All" },
-                { key: "proposed" as const, label: "Proposed" },
-                { key: "subscribed" as const, label: "Subscribed" },
+                { key: "all" as const, label: "全部" },
+                { key: "proposed" as const, label: "我发布的" },
               ].map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  className={`px-4 py-1.5 text-xs font-bold transition-all rounded-md ${
                     activeTab === tab.key
-                      ? "bg-stone-900 text-white"
-                      : "text-stone-500 hover:text-stone-700"
+                      ? "bg-white text-black shadow-sm"
+                      : "text-white/50 hover:text-white hover:bg-white/5"
                   }`}
                 >
                   {tab.label}
@@ -407,24 +357,42 @@ export default function PilFeature() {
               ))}
             </div>
             {stats.totalParticipants > 0 && (
-              <div className="flex items-center gap-3 text-xs text-stone-400">
-                 <span>{stats.totalParticipants} 人参与</span>
-                 <span className="w-px h-3 bg-stone-300"></span>
-                 <span>{stats.totalQuestions} 话题</span>
+              <div className="flex items-center gap-3 text-xs text-white/30 font-bold">
+                 <span>{stats.totalParticipants} 辩手在线</span>
+                 <span className="w-px h-3 bg-white/10"></span>
+                 <span>{stats.totalQuestions} 个话题</span>
               </div>
             )}
           </div>
           
           {isLoadingFeed ? (
             <div className="flex justify-center py-10">
-              <Loader2 className="w-6 h-6 animate-spin text-stone-400" />
+              <Loader2 className="w-6 h-6 animate-spin text-white/20" />
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-6">
               {filteredFeedItems.map((item) => (
                 <div key={item.id} className="transition-all duration-300">
                   {expandedId === item.id ? (
-                    <div className="relative">
+                    <div className="relative group">
+                      {/* Control Bar for Expanded View */}
+                      <div className="absolute top-4 right-4 z-20 flex gap-2">
+                         {currentUserId && item.creatorUserId === currentUserId && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteQuestion(item.id); }}
+                            className="px-3 py-1.5 text-xs font-bold text-white/50 hover:text-[#FF4D4F] bg-black/50 hover:bg-black/80 backdrop-blur-md rounded-lg transition-all border border-white/10"
+                          >
+                            删除
+                          </button>
+                        )}
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setExpandedId(null); }}
+                          className="px-3 py-1.5 text-xs font-bold text-white/70 hover:text-white bg-black/50 hover:bg-black/80 backdrop-blur-md rounded-lg transition-all border border-white/10"
+                        >
+                          收起
+                        </button>
+                      </div>
+
                       <ArenaDisplay
                         question={item.content}
                         arenaType={item.arenaType}
@@ -432,45 +400,23 @@ export default function PilFeature() {
                         status={item.status}
                         redRatio={item.redRatio}
                         blueRatio={item.blueRatio}
-                        topRedComments={item.fullComments.red}
-                        topBlueComments={item.fullComments.blue}
+                        redVotes={item.redVotes}
+                        blueVotes={item.blueVotes}
+                        comments={item.structuredComments}
                       />
-                      <button 
-                        onClick={() => setExpandedId(null)}
-                        className="absolute top-4 right-4 text-stone-400 hover:text-stone-900 bg-white/70 rounded-full px-2 py-1"
-                        aria-label="收起"
-                      >
-                        <span className="text-xs font-bold uppercase">收起</span>
-                      </button>
-                      <button
-                        onClick={() => toggleSubscribed(item.id)}
-                        className={`absolute top-4 right-20 rounded-full px-2.5 py-1 text-xs font-semibold border ${
-                          subscribedIds.includes(item.id)
-                            ? "text-blue-700 border-blue-200 bg-blue-50"
-                            : "text-stone-500 border-stone-200 bg-white/80"
-                        }`}
-                        aria-label={subscribedIds.includes(item.id) ? "取消关注" : "关注问题"}
-                      >
-                        {subscribedIds.includes(item.id) ? "已关注" : "Follow"}
-                      </button>
-                      {currentUserId && item.creatorUserId === currentUserId && (
-                        <button
-                          onClick={() => handleDeleteQuestion(item.id)}
-                          className="absolute top-4 left-4 rounded-full px-2.5 py-1 text-xs font-semibold border border-red-200 text-red-600 bg-red-50"
-                          aria-label="删除问题"
-                        >
-                          删除
-                        </button>
-                      )}
                     </div>
                   ) : (
                     <FeedCard
-                      {...item}
-                      username={item.userInfo.name}
-                      currentUserName={userName}
-                      avatarUrl={item.userInfo.avatarUrl}
-                      isSubscribed={subscribedIds.includes(item.id)}
-                      onToggleSubscribe={() => toggleSubscribed(item.id)}
+                      id={item.id}
+                      content={item.content}
+                      arenaType={item.arenaType}
+                      redRatio={item.redRatio}
+                      blueRatio={item.blueRatio}
+                      redVotes={item.redVotes}
+                      blueVotes={item.blueVotes}
+                      commentCount={item.commentCount}
+                      previewComments={item.previewComments}
+                      comments={item.structuredComments}
                       canDelete={Boolean(currentUserId && item.creatorUserId === currentUserId)}
                       onDelete={() => handleDeleteQuestion(item.id)}
                       onClick={() => handleOpenItem(item.id)}
@@ -480,12 +426,15 @@ export default function PilFeature() {
               ))}
               
               {filteredFeedItems.length === 0 && (
-                <div className="text-center py-10 text-stone-400 text-sm">
-                  {activeTab === "all"
-                    ? "暂无讨论，快来发布第一个问题吧！"
-                    : activeTab === "proposed"
-                      ? "你还没有提出过问题"
-                      : "还没有关注的问题，点 Follow 试试"}
+                <div className="text-center py-20">
+                  <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 text-white/20">
+                    <User className="w-8 h-8" />
+                  </div>
+                  <p className="text-white/30 text-sm font-bold">
+                    {activeTab === "all"
+                      ? "暂时还没有话题，快来发布第一个吧！"
+                      : "你还没有发布过话题"}
+                  </p>
                 </div>
               )}
             </div>

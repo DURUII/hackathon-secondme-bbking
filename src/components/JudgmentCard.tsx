@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef } from "react";
+import { Copy, Share2, Zap, Shield, Cpu } from "lucide-react";
 
 interface JudgmentCardProps {
   question: string;
@@ -14,9 +15,9 @@ interface JudgmentCardProps {
 }
 
 const ARENA_CONFIG = {
-  toxic: { icon: "🔥", label: "毒舌场", color: "red" },
-  comfort: { icon: "💚", label: "安慰场", color: "green" },
-  rational: { icon: "🧠", label: "理性场", color: "blue" },
+  toxic: { icon: <Zap className="w-4 h-4" />, label: "TOXIC_ARENA", color: "#FF3300" },
+  comfort: { icon: <Shield className="w-4 h-4" />, label: "SAFE_ZONE", color: "#00CC00" },
+  rational: { icon: <Cpu className="w-4 h-4" />, label: "LOGIC_CORE", color: "#0033FF" },
 } as const;
 
 export function JudgmentCard({
@@ -34,6 +35,28 @@ export function JudgmentCard({
 
   const formatRatio = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
+  // Calculate widths for the "Tug of War" bar
+  const redPercent = Math.round(redRatio * 100);
+  const bluePercent = Math.round(blueRatio * 100);
+  
+  // Ensure minimum width for text visibility if there are votes
+  let redWidth = redPercent;
+  let blueWidth = bluePercent;
+  
+  if (redPercent > 0 || bluePercent > 0) {
+    if (redWidth < 15 && redWidth > 0) {
+      redWidth = 15;
+      blueWidth = 85;
+    } else if (blueWidth < 15 && blueWidth > 0) {
+      blueWidth = 15;
+      redWidth = 85;
+    }
+  } else {
+    // Default 50/50 if no votes
+    redWidth = 50;
+    blueWidth = 50;
+  }
+
   const handleShare = () => {
     onShare?.();
   };
@@ -49,111 +72,121 @@ export function JudgmentCard({
       {/* Main Card */}
       <div
         ref={cardRef}
-        className="bg-gradient-to-b from-gray-900 to-gray-800 rounded-3xl shadow-2xl overflow-hidden text-white"
-        style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+        className="bg-[#1E1E1E] border border-white/10 rounded-xl overflow-hidden shadow-2xl relative"
       >
+        {/* Decorative top accent */}
+        <div className="h-1 w-full bg-gradient-to-r from-[#FF4D4F] via-white/20 to-[#1890FF]"></div>
+
         {/* Header */}
-        <div className={`bg-gradient-to-r from-${config.color}-600 to-${config.color}-700 p-6 text-center`}>
-          <h1 className="text-2xl font-bold tracking-wider mb-2">帮我评评理</h1>
-          <div className={`inline-flex items-center gap-2 bg-${config.color}-500 px-4 py-1.5 rounded-full text-sm font-medium`}>
-            <span>{config.icon}</span>
-            <span>{config.label}</span>
+        <div className="p-6 pb-0">
+          <div className="flex items-center justify-between mb-4">
+             <div className="flex items-center gap-2">
+                <span className="text-xl">⚖️</span>
+                <h1 className="text-xl font-bold text-white font-display tracking-wide">
+                  最终判决 (FINAL JUDGMENT)
+                </h1>
+             </div>
+             <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
+                <span style={{ color: config.color }}>{config.icon}</span>
+                <span className="text-xs font-bold text-white/70">{config.label}</span>
+             </div>
+          </div>
+          
+          <h2 className="text-lg font-bold text-white leading-relaxed mb-6">
+            "{question}"
+          </h2>
+        </div>
+
+        {/* Visual Tug of War */}
+        <div className="px-6 mb-8">
+           <div className="flex justify-between items-end mb-3">
+            <div className="text-[#FF4D4F] font-bold flex items-center gap-2 text-sm">
+              <div className="w-2 h-2 bg-[#FF4D4F] rounded-full"></div>
+              <span>正方 (PRO)</span>
+            </div>
+            <div className="text-[#1890FF] font-bold flex items-center gap-2 text-sm">
+              <span>反方 (CON)</span>
+              <div className="w-2 h-2 bg-[#1890FF] rounded-full"></div>
+            </div>
+          </div>
+          
+          <div className="relative h-12 w-full rounded-lg overflow-hidden flex shadow-inner bg-black/20">
+            <div 
+              className="h-full bg-[#FF4D4F] flex items-center justify-start pl-4 relative transition-all duration-500" 
+              style={{ width: `${redWidth}%` }}
+            >
+              <span className="text-white font-black text-xl z-10 drop-shadow-md">{redPercent}%</span>
+            </div>
+            <div className="absolute top-0 bottom-0 w-2 bg-white transform -skew-x-[20deg] z-20 left-[50%] -ml-1 border-x border-black/10" style={{ left: `${redWidth}%` }}></div>
+            <div 
+              className="h-full bg-[#1890FF] flex items-center justify-end pr-4 relative transition-all duration-500" 
+              style={{ width: `${blueWidth}%` }}
+            >
+              <span className="text-white font-black text-xl z-10 drop-shadow-md">{bluePercent}%</span>
+            </div>
           </div>
         </div>
 
-        {/* Question */}
-        <div className="p-6 bg-gray-800/50">
-          <p className="text-lg font-bold text-center leading-relaxed">{question}</p>
-        </div>
+        {/* Top Arguments */}
+        <div className="px-6 pb-6 space-y-6">
+           {/* Red Arguments */}
+           <div>
+             <h3 className="text-xs font-bold text-[#FF4D4F] mb-3 uppercase tracking-wider">Top Red Arguments</h3>
+             <div className="space-y-3">
+               {topRedComments.length > 0 ? (
+                 topRedComments.map((comment, i) => (
+                   <div key={i} className="flex gap-3 text-sm text-white/90 bg-[#FF4D4F]/5 p-3 rounded-lg border border-[#FF4D4F]/10">
+                     <span className="text-[#FF4D4F] font-bold shrink-0 mt-0.5">0{i+1}</span>
+                     <p className="leading-relaxed">{comment}</p>
+                   </div>
+                 ))
+               ) : (
+                 <p className="text-xs text-white/30 italic">No arguments yet</p>
+               )}
+             </div>
+           </div>
 
-        {/* Results */}
-        <div className="p-6 space-y-4">
-          {/* Red Pil */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-red-400">🔴</span>
-                <span className="font-bold text-red-400">红方</span>
-              </div>
-              <span className="text-2xl font-bold text-red-400">{formatRatio(redRatio)}</span>
-            </div>
-            <div className="h-6 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-red-500 to-red-400 rounded-full"
-                style={{ width: formatRatio(redRatio) }}
-              />
-            </div>
-            <div className="space-y-1">
-              {topRedComments.length > 0 ? (
-                topRedComments.map((comment, i) => (
-                  <p key={i} className="text-sm text-red-200 pl-4 border-l-2 border-red-500/50">
-                    {comment}
-                  </p>
-                ))
-              ) : (
-                <p className="text-sm text-gray-500 italic">暂无金句</p>
-              )}
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-gray-700 my-4" />
-
-          {/* Blue Pil */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-blue-400">🔵</span>
-                <span className="font-bold text-blue-400">蓝方</span>
-              </div>
-              <span className="text-2xl font-bold text-blue-400">{formatRatio(blueRatio)}</span>
-            </div>
-            <div className="h-6 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"
-                style={{ width: formatRatio(blueRatio) }}
-              />
-            </div>
-            <div className="space-y-1">
-              {topBlueComments.length > 0 ? (
-                topBlueComments.map((comment, i) => (
-                  <p key={i} className="text-sm text-blue-200 pl-4 border-l-2 border-blue-500/50">
-                    {comment}
-                  </p>
-                ))
-              ) : (
-                <p className="text-sm text-gray-500 italic">暂无金句</p>
-              )}
-            </div>
-          </div>
+           {/* Blue Arguments */}
+           <div>
+             <h3 className="text-xs font-bold text-[#1890FF] mb-3 uppercase tracking-wider">Top Blue Arguments</h3>
+             <div className="space-y-3">
+               {topBlueComments.length > 0 ? (
+                 topBlueComments.map((comment, i) => (
+                   <div key={i} className="flex gap-3 text-sm text-white/90 bg-[#1890FF]/5 p-3 rounded-lg border border-[#1890FF]/10">
+                     <span className="text-[#1890FF] font-bold shrink-0 mt-0.5">0{i+1}</span>
+                     <p className="leading-relaxed">{comment}</p>
+                   </div>
+                 ))
+               ) : (
+                 <p className="text-xs text-white/30 italic">No arguments yet</p>
+               )}
+             </div>
+           </div>
         </div>
 
         {/* Footer */}
-        <div className="bg-gray-900/50 p-4 flex items-center justify-between">
+        <div className="bg-white/5 p-4 border-t border-white/10 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">AI判决书</span>
+            <div className="w-1.5 h-1.5 bg-[#FFFF00] rounded-full animate-pulse" />
+            <span className="text-[10px] font-bold text-white/50 uppercase tracking-widest">AI Verdict Finalized</span>
           </div>
           <div className="flex gap-2">
             {onCopy && (
               <button
                 onClick={handleCopy}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-2 transition-all"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                复制金句
+                <Copy className="w-3 h-3" />
+                <span>Copy</span>
               </button>
             )}
             {onShare && (
               <button
                 onClick={handleShare}
-                className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                className="px-3 py-1.5 rounded-lg bg-white text-black hover:bg-white/90 text-xs font-bold flex items-center gap-2 transition-all shadow-lg"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                </svg>
-                分享判决
+                <Share2 className="w-3 h-3" />
+                <span>Share</span>
               </button>
             )}
           </div>

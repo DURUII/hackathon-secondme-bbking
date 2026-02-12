@@ -1,33 +1,25 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Flame, HeartHandshake, Brain, Send, X, User, HelpCircle } from "lucide-react";
+import { Send, X, User } from "lucide-react";
 
 interface QuestionInputProps {
-  onSubmit: (data: { content: string; arenaType: string }) => void;
-  onArenaChange?: (arena: string) => void;
+  onSubmit: (data: { content: string }) => void;
   isLoading?: boolean;
   initialContent?: string;
   userAvatar?: string;
 }
 
-const ARENA_OPTIONS = [
-  { id: "toxic", label: "毒舌", icon: Flame },
-  { id: "comfort", label: "安慰", icon: HeartHandshake },
-  { id: "rational", label: "理性", icon: Brain },
-] as const;
-
 export function QuestionInput({ 
   onSubmit, 
-  onArenaChange, 
   isLoading = false, 
   initialContent,
   userAvatar 
 }: QuestionInputProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [content, setContent] = useState("");
-  const [arenaType, setArenaType] = useState<string>("toxic");
   const containerRef = useRef<HTMLDivElement>(null);
+  const MAX_LENGTH = 25;
 
   // Sync with initialContent
   useEffect(() => {
@@ -56,64 +48,35 @@ export function QuestionInput({
 
     onSubmit({
       content: content.trim(),
-      arenaType,
     });
     // Don't collapse immediately, let parent handle success/reset
-  };
-
-  const handleArenaChange = (arena: string) => {
-    setArenaType(arena);
-    onArenaChange?.(arena);
   };
 
   const isSubmitDisabled = isLoading || content.trim().length === 0;
 
   if (!isExpanded) {
     return (
-      <div 
+      <div
         onClick={() => setIsExpanded(true)}
-        className="w-full max-w-md mx-auto bg-white rounded-3xl p-4 shadow-sm border border-stone-100 flex items-center gap-4 cursor-pointer hover:shadow-md transition-all active:scale-[0.99]"
+        className="w-full max-w-md mx-auto bg-[#1E1E1E] border border-white/10 p-4 flex items-center gap-4 cursor-text hover:border-white/20 transition-all shadow-lg rounded-xl group"
       >
-        <div className="w-10 h-10 rounded-full bg-stone-200 flex items-center justify-center text-stone-500">
-            <HelpCircle className="w-6 h-6" />
-        </div>
-        <span className="text-stone-400 font-medium">让大家评评理，听听大家的意见？</span>
+        <span className="text-white/30 font-sans text-sm font-medium group-hover:text-white/50 transition-colors">发布一个新的评理话题...</span>
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="w-full max-w-md mx-auto bg-white rounded-3xl shadow-lg border border-stone-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div ref={containerRef} className="w-full max-w-md mx-auto bg-[#1E1E1E] border border-white/10 shadow-2xl rounded-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
       <form onSubmit={handleSubmit} className="p-6">
-        {/* Header / Tabs */}
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex gap-4">
-            {ARENA_OPTIONS.map((arena) => {
-              const Icon = arena.icon;
-              const isSelected = arenaType === arena.id;
-              return (
-                <button
-                  key={arena.id}
-                  type="button"
-                  onClick={() => handleArenaChange(arena.id)}
-                  className={`
-                    flex items-center gap-1.5 pb-1 border-b-2 transition-colors
-                    ${isSelected 
-                      ? "border-stone-900 text-stone-900" 
-                      : "border-transparent text-stone-400 hover:text-stone-600"
-                    }
-                  `}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span className="text-sm font-medium">{arena.label}</span>
-                </button>
-              );
-            })}
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="text-white/50 text-xs font-bold uppercase tracking-wider">
+            发表新话题
           </div>
           <button 
             type="button" 
             onClick={() => setIsExpanded(false)}
-            className="text-stone-400 hover:text-stone-900 p-1"
+            className="text-white/30 hover:text-white p-1 transition-colors"
             aria-label="关闭"
           >
             <X className="w-5 h-5" />
@@ -121,35 +84,45 @@ export function QuestionInput({
         </div>
 
         {/* Textarea */}
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="输入你的社交难题..."
-          disabled={isLoading}
-          autoFocus
-          className="w-full h-32 text-lg text-stone-900 placeholder:text-stone-300 bg-transparent resize-none focus:outline-none"
-        />
+        <div className="relative">
+          <textarea
+            value={content}
+            onChange={(e) => {
+              if (e.target.value.length <= MAX_LENGTH) {
+                setContent(e.target.value);
+              }
+            }}
+            placeholder="请输入你需要大家评理的事情经过..."
+            disabled={isLoading}
+            autoFocus
+            className="w-full h-32 text-base text-white placeholder:text-white/20 bg-transparent resize-none focus:outline-none font-sans leading-relaxed"
+            maxLength={MAX_LENGTH}
+          />
+          <div className="absolute bottom-0 right-0 text-xs font-bold text-white/20">
+            {content.length}/{MAX_LENGTH}
+          </div>
+        </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end pt-4">
+        <div className="flex items-center justify-end pt-4 border-t border-white/5 mt-2">
           <button
             type="submit"
             disabled={isSubmitDisabled}
             aria-label={isLoading ? "发布中" : "发布"}
             className={`
-              flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all
+              flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm transition-all
               ${isSubmitDisabled
-                ? "bg-stone-100 text-stone-300 cursor-not-allowed"
-                : "bg-stone-900 text-white hover:scale-105 active:scale-95 shadow-md"
+                ? "bg-white/5 text-white/20 cursor-not-allowed"
+                : "bg-[#FF4D4F] text-white hover:bg-[#ff7875] active:scale-95 shadow-lg shadow-red-500/20"
               }
             `}
           >
             {isLoading ? (
-              <span className="animate-spin w-5 h-5 border-2 border-white/30 border-t-white rounded-full" />
+              <span className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
             ) : (
               <>
                 <Send className="w-4 h-4" />
-                <span>发布</span>
+                <span>发布话题</span>
               </>
             )}
           </button>
