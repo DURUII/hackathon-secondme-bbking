@@ -24,7 +24,7 @@ export async function POST() {
     // Queue this participant to vote on recent questions (async eventual consistency).
     const recentSince = new Date(Date.now() - RECENT_WINDOW_HOURS * 60 * 60 * 1000);
     const recentQuestions = await db.question.findMany({
-      where: { createdAt: { gte: recentSince } },
+      where: { createdAt: { gte: recentSince }, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       take: RECENT_QUESTION_LIMIT,
       select: { id: true },
@@ -41,6 +41,7 @@ export async function POST() {
     return NextResponse.json({
       success: true,
       data: {
+        userId: user.id,
         id: participant.id,
         name: participant.name,
         isActive: participant.isActive,
@@ -71,6 +72,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       data: {
+        userId: user.id,
         id: participant.id,
         name: participant.name,
         isActive: participant.isActive,

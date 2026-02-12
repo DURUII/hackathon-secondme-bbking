@@ -15,8 +15,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: "questionId is required" }, { status: 400 });
     }
 
-    const question = await db.question.findUnique({
-      where: { id: questionId },
+    const question = await db.question.findFirst({
+      where: { id: questionId, deletedAt: null },
       select: { id: true },
     });
     if (!question) {

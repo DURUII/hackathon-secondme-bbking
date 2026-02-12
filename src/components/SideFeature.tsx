@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { QuestionInput } from "@/components/QuestionInput";
 import { FeedCard } from "@/components/FeedCard";
 import { ArenaDisplay } from "@/components/ArenaDisplay";
-import { User, Flame, MessageCircle, Loader2 } from "lucide-react";
+import { User, Loader2 } from "lucide-react";
 
 interface UserInfo {
   name: string;
@@ -13,6 +13,7 @@ interface UserInfo {
 
 interface FeedItem {
   id: string;
+  creatorUserId?: string | null;
   userInfo: {
     name: string;
     avatarUrl?: string;
@@ -43,14 +44,37 @@ interface FeedItem {
   };
 }
 
+type FeedTab = "all" | "proposed" | "subscribed";
+
 export default function PilFeature() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
   const [stats, setStats] = useState({ totalParticipants: 0, totalQuestions: 0 });
+  const [activeTab, setActiveTab] = useState<FeedTab>("all");
+  const [subscribedIds, setSubscribedIds] = useState<string[]>([]);
   const publishInFlightRef = useRef(false);
+
+  const userName = userInfo?.name;
+
+  const fetchSubscriptions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/subscription", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.success) {
+        const ids = Array.isArray(data.data?.questionIds)
+          ? data.data.questionIds.filter((id: unknown) => typeof id === "string")
+          : [];
+        setSubscribedIds(ids);
+      }
+    } catch (error) {
+      console.error("Failed to fetch subscriptions", error);
+    }
+  }, []);
 
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
@@ -100,6 +124,76 @@ export default function PilFeature() {
     fetchFeed();
   }, [fetchFeed]);
 
+  useEffect(() => {
+    fetchSubscriptions();
+  }, [fetchSubscriptions]);
+
+  const setSubscribed = useCallback(async (questionId: string, subscribed: boolean) => {
+    setSubscribedIds((prev) => {
+      if (subscribed) {
+        return prev.includes(questionId) ? prev : [...prev, questionId];
+      }
+      return prev.filter((id) => id !== questionId);
+    });
+
+    try {
+      const res = await fetch("/api/subscription", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId, subscribed }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } catch (error) {
+      setSubscribedIds((prev) => {
+        if (subscribed) {
+          return prev.filter((id) => id !== questionId);
+        }
+        return prev.includes(questionId) ? prev : [...prev, questionId];
+      });
+      console.error("Failed to update subscription", error);
+      alert("关注状态更新失败，请重试");
+    }
+  }, []);
+
+  const toggleSubscribed = useCallback((questionId: string) => {
+    const isSubscribed = subscribedIds.includes(questionId);
+    setSubscribed(questionId, !isSubscribed);
+  }, [setSubscribed, subscribedIds]);
+
+  const handleDeleteQuestion = useCallback(async (questionId: string) => {
+    const ok = window.confirm("确认删除这个问题？删除后不会在列表展示。");
+    if (!ok) return;
+
+    const prevFeedItems = feedItems;
+    const prevExpandedId = expandedId;
+    const prevSubscribedIds = subscribedIds;
+
+    setFeedItems((prev) => prev.filter((item) => item.id !== questionId));
+    setSubscribedIds((prev) => prev.filter((id) => id !== questionId));
+    setExpandedId((prev) => (prev === questionId ? null : prev));
+
+    try {
+      const res = await fetch("/api/question/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } catch (error) {
+      setFeedItems(prevFeedItems);
+      setExpandedId(prevExpandedId);
+      setSubscribedIds(prevSubscribedIds);
+      console.error("Failed to delete question", error);
+      alert("删除失败，请重试");
+    }
+  }, [expandedId, feedItems, subscribedIds]);
+
   // Fetch User Info
   useEffect(() => {
     async function fetchUserInfo() {
@@ -124,8 +218,12 @@ export default function PilFeature() {
         const regData = await regRes.json();
 
         if (regData.success) {
+          if (typeof regData.data?.userId === "string") {
+            setCurrentUserId(regData.data.userId);
+          }
           // Trigger backfill for new/existing participant to vote on recent questions
           fetch("/api/backfill", { method: "POST" }).catch(console.error);
+          fetchSubscriptions();
         }
       } catch (error) {
         console.error("Failed to fetch user info", error);
@@ -134,7 +232,7 @@ export default function PilFeature() {
       }
     }
     fetchUserInfo();
-  }, []);
+  }, [fetchSubscriptions]);
 
   // Removed redundant definition of fetchFeed here (it was moved up)
   // const fetchFeed = useCallback(...) 
@@ -155,6 +253,7 @@ export default function PilFeature() {
         name: userInfo?.name || "我",
         avatarUrl: userInfo?.avatarUrl,
       },
+      creatorUserId: currentUserId,
       timeAgo: "刚刚",
       content: data.content,
       arenaType: data.arenaType as any,
@@ -223,6 +322,12 @@ export default function PilFeature() {
     }).catch((err) => console.error("Failed to enqueue question view", err));
   }, []);
 
+  const filteredFeedItems = feedItems.filter((item) => {
+    if (activeTab === "all") return true;
+    if (activeTab === "proposed") return Boolean(currentUserId && item.creatorUserId === currentUserId);
+    return subscribedIds.includes(item.id);
+  });
+
   return (
     <div className="min-h-screen bg-stone-50 pb-20">
       {/* Header */}
@@ -231,8 +336,8 @@ export default function PilFeature() {
           <div className="flex items-center gap-2">
              {/* <Flame className="w-6 h-6 text-stone-900" /> */} 
              {/* Using simple text logo for cleaner look as per design */}
-             <h1 className="text-xl font-light tracking-tight text-stone-900">
-               帮我评评理
+             <h1 className="text-xl font-black tracking-tight text-stone-900">
+               评理
              </h1>
           </div>
           <div className="w-8 h-8 rounded-full bg-stone-200 overflow-hidden">
@@ -247,7 +352,8 @@ export default function PilFeature() {
         </div>
       </header>
 
-      <main className="max-w-md mx-auto px-4 pt-6 space-y-8">
+      <main className="max-w-md mx-auto px-4 pt-4 space-y-6">
+        
         {/* Publisher */}
         <section>
           <QuestionInput 
@@ -260,15 +366,28 @@ export default function PilFeature() {
         {/* Square Feed */}
         <section>
           <div className="flex items-center justify-between mb-4 pl-2 pr-2">
-            <div className="flex items-center gap-2">
-              <MessageCircle className="w-4 h-4 text-stone-400" />
-              <h2 className="text-xs font-bold uppercase tracking-widest text-stone-500">
-                正在热议 (Square)
-              </h2>
+            <div className="inline-flex p-1 rounded-full border border-stone-200 bg-white">
+              {[
+                { key: "all" as const, label: "All" },
+                { key: "proposed" as const, label: "Proposed" },
+                { key: "subscribed" as const, label: "Subscribed" },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                    activeTab === tab.key
+                      ? "bg-stone-900 text-white"
+                      : "text-stone-500 hover:text-stone-700"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
             {stats.totalParticipants > 0 && (
               <div className="flex items-center gap-3 text-xs text-stone-400">
-                 <span>{stats.totalParticipants} 判官</span>
+                 <span>{stats.totalParticipants} 人参与</span>
                  <span className="w-px h-3 bg-stone-300"></span>
                  <span>{stats.totalQuestions} 话题</span>
               </div>
@@ -281,7 +400,7 @@ export default function PilFeature() {
             </div>
           ) : (
             <div className="space-y-4">
-              {feedItems.map((item) => (
+              {filteredFeedItems.map((item) => (
                 <div key={item.id} className="transition-all duration-300">
                   {expandedId === item.id ? (
                     <div className="relative">
@@ -297,27 +416,55 @@ export default function PilFeature() {
                       />
                       <button 
                         onClick={() => setExpandedId(null)}
-                        className="absolute top-4 right-4 text-stone-400 hover:text-stone-900"
+                        className="absolute top-4 right-4 text-stone-400 hover:text-stone-900 bg-white/70 rounded-full px-2 py-1"
                         aria-label="收起"
                       >
                         <span className="text-xs font-bold uppercase">收起</span>
                       </button>
+                      <button
+                        onClick={() => toggleSubscribed(item.id)}
+                        className={`absolute top-4 right-20 rounded-full px-2.5 py-1 text-xs font-semibold border ${
+                          subscribedIds.includes(item.id)
+                            ? "text-blue-700 border-blue-200 bg-blue-50"
+                            : "text-stone-500 border-stone-200 bg-white/80"
+                        }`}
+                        aria-label={subscribedIds.includes(item.id) ? "取消关注" : "关注问题"}
+                      >
+                        {subscribedIds.includes(item.id) ? "已关注" : "Follow"}
+                      </button>
+                      {currentUserId && item.creatorUserId === currentUserId && (
+                        <button
+                          onClick={() => handleDeleteQuestion(item.id)}
+                          className="absolute top-4 left-4 rounded-full px-2.5 py-1 text-xs font-semibold border border-red-200 text-red-600 bg-red-50"
+                          aria-label="删除问题"
+                        >
+                          删除
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <FeedCard
                       {...item}
                       username={item.userInfo.name}
-                      currentUserName={userInfo?.name}
+                      currentUserName={userName}
                       avatarUrl={item.userInfo.avatarUrl}
+                      isSubscribed={subscribedIds.includes(item.id)}
+                      onToggleSubscribe={() => toggleSubscribed(item.id)}
+                      canDelete={Boolean(currentUserId && item.creatorUserId === currentUserId)}
+                      onDelete={() => handleDeleteQuestion(item.id)}
                       onClick={() => handleOpenItem(item.id)}
                     />
                   )}
                 </div>
               ))}
               
-              {feedItems.length === 0 && (
+              {filteredFeedItems.length === 0 && (
                 <div className="text-center py-10 text-stone-400 text-sm">
-                  暂无讨论，快来发布第一个问题吧！
+                  {activeTab === "all"
+                    ? "暂无讨论，快来发布第一个问题吧！"
+                    : activeTab === "proposed"
+                      ? "你还没有提出过问题"
+                      : "还没有关注的问题，点 Follow 试试"}
                 </div>
               )}
             </div>

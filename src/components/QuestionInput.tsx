@@ -77,7 +77,7 @@ export function QuestionInput({
         <div className="w-10 h-10 rounded-full bg-stone-200 flex items-center justify-center text-stone-500">
             <HelpCircle className="w-6 h-6" />
         </div>
-        <span className="text-stone-400 font-medium">有什么想让 AI 评评理？</span>
+        <span className="text-stone-400 font-medium">让大家评评理，听听大家的意见？</span>
       </div>
     );
   }

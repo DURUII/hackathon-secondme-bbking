@@ -6,25 +6,8 @@ type ShareCardInput = {
   myComment: string;
 };
 
-// Font constants
-const FONT_NUM = "AccidentalPresidency";
-const FONT_CN = "WenYueXinQingNianTi";
-
-// Load custom fonts
-async function loadFonts() {
-  const fonts = [
-    new FontFace(FONT_NUM, "url(/font/AccidentalPresidency.ttf)"),
-    new FontFace(FONT_CN, "url(/font/WenYueXinQingNianTi/WenYue-XinQingNianTi-W8-J-2.otf)"),
-  ];
-
-  try {
-    await Promise.all(fonts.map((f) => f.load()));
-    fonts.forEach((f) => document.fonts.add(f));
-  } catch (e) {
-    console.error("Failed to load fonts", e);
-    // Fallback fonts will be used if loading fails
-  }
-}
+const FONT_CN = "'WenYueXinQingNianTi','PingFang SC','Microsoft YaHei',sans-serif";
+const FONT_NUM = "'AccidentalPresidency','Arial Black',sans-serif";
 
 function wrapText(
   ctx: CanvasRenderingContext2D,
@@ -33,11 +16,13 @@ function wrapText(
   y: number,
   maxWidth: number,
   lineHeight: number,
-  maxLines: number
+  maxLines: number,
+  align: CanvasTextAlign = "left"
 ) {
   const chars = text.split("");
   let line = "";
   let lineCount = 0;
+  ctx.textAlign = align;
 
   for (let i = 0; i < chars.length; i++) {
     const next = line + chars[i];
@@ -57,68 +42,24 @@ function wrapText(
   }
 }
 
-// Draw a puzzle-piece connector line (vertical)
-function drawPuzzleSplit(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  height: number,
-  tabSize: number = 20
-) {
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  // Draw a tab in the middle
-  const midY = y + height / 2;
-  ctx.lineTo(x, midY - tabSize);
-  // Curve for the tab (protruding right)
-  ctx.bezierCurveTo(x + tabSize, midY - tabSize, x + tabSize, midY + tabSize, x, midY + tabSize);
-  ctx.lineTo(x, y + height);
-  // Don't close path, just the line
-}
-
-// Draw a box with puzzle-like top/bottom edges
-function drawPuzzleBox(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  color: string
-) {
-  const tabSize = 15;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  
-  // Top edge with multiple tabs
-  for (let tx = x; tx < x + width; tx += 60) {
-    ctx.lineTo(tx + 20, y);
-    ctx.lineTo(tx + 30, y + tabSize); // Down
-    ctx.lineTo(tx + 40, y); // Up
-    ctx.lineTo(tx + 60, y);
+async function ensureFonts() {
+  const faces = [
+    new FontFace("AccidentalPresidency", "url(/font/AccidentalPresidency.ttf)"),
+    new FontFace("WenYueXinQingNianTi", "url(/font/WenYueXinQingNianTi/WenYue-XinQingNianTi-W8-J-2.otf)"),
+  ];
+  try {
+    await Promise.all(faces.map((f) => f.load()));
+    faces.forEach((f) => document.fonts.add(f));
+  } catch {
+    // fallback to system fonts
   }
-  
-  ctx.lineTo(x + width, y);
-  ctx.lineTo(x + width, y + height);
-  
-  // Bottom edge with multiple tabs
-  for (let tx = x + width; tx > x; tx -= 60) {
-    ctx.lineTo(tx - 20, y + height);
-    ctx.lineTo(tx - 30, y + height - tabSize); // Up
-    ctx.lineTo(tx - 40, y + height); // Down
-    ctx.lineTo(tx - 60, y + height);
-  }
-  
-  ctx.lineTo(x, y + height);
-  ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
 }
 
 export async function generateShareCardBlob(input: ShareCardInput): Promise<Blob> {
-  await loadFonts();
+  await ensureFonts();
 
   const width = 1080;
-  const height = 1080; // 1:1 Aspect Ratio
+  const height = 1080;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -128,178 +69,90 @@ export async function generateShareCardBlob(input: ShareCardInput): Promise<Blob
   const totalVotes = Math.max(0, input.redVotes + input.blueVotes);
   const redRatio = totalVotes > 0 ? input.redVotes / totalVotes : 0.5;
 
-  // --- Background ---
-  // Split background: Top Blue/Red stripes? Or just a cool debate background
-  // User asked for "1:1 reproduction" of the image I can't see.
-  // Assuming standard debate show style: Red vs Blue background split.
-  
-  // Left Red, Right Blue? Or Top/Bottom?
-  // Usually Red is left (affirmative) or right (negative).
-  // Let's use a dynamic diagonal split or vertical split.
-  // Given "Up and down puzzle texture", maybe horizontal split.
-  
-  // Let's go with a vibrant background
-  const bgGradient = ctx.createLinearGradient(0, 0, width, height);
-  bgGradient.addColorStop(0, "#1a2a6c");
-  bgGradient.addColorStop(1, "#b21f1f");
-  ctx.fillStyle = "#f0f0f0"; // Light gray bg for card
+  // Background
+  ctx.fillStyle = "#0b1ea8";
   ctx.fillRect(0, 0, width, height);
-  
-  // Draw top "Show" header background
-  ctx.fillStyle = "#2334D0"; // Deep Blue
-  ctx.fillRect(0, 0, width, 300);
-  
-  // Draw middle "Red vs Blue" background
-  ctx.fillStyle = "#E60012"; // Red
-  ctx.fillRect(0, 300, width, 400); // Red base
-  
-  // Draw Blue side on top of Red with a puzzle split?
-  // Actually, usually it's a bar.
-  
-  // Let's try to match the "Image" description:
-  // "Puzzle texture"
-  
-  // --- 1. Question Card (Top) ---
-  const qBoxY = 80;
-  const qBoxH = 220;
-  const qBoxMargin = 60;
-  
-  // White board with yellow accent
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.3)";
-  ctx.shadowBlur = 20;
-  ctx.shadowOffsetY = 10;
-  
-  // Draw white box with "puzzle" edges
-  // We'll simulate the "puzzle" look by drawing a jagged path
-  ctx.fillStyle = "#FFFFFF";
-  ctx.fillRect(qBoxMargin, qBoxY, width - qBoxMargin * 2, qBoxH);
-  
-  // Yellow inner box
-  ctx.fillStyle = "#FFE100";
-  ctx.fillRect(qBoxMargin + 20, qBoxY + 20, width - qBoxMargin * 2 - 40, qBoxH - 40);
-  ctx.restore();
+  ctx.fillStyle = "#ef111c";
+  ctx.fillRect(48, 356, width - 96, 360);
 
-  // Question Text
-  ctx.fillStyle = "#000000";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  // Use Chinese font
-  ctx.font = `900 64px '${FONT_CN}', sans-serif`; 
-  wrapText(ctx, input.question, width / 2, qBoxY + qBoxH / 2 - 20, width - qBoxMargin * 2 - 80, 80, 2);
+  // Top question board (white + yellow)
+  const qx = 92;
+  const qy = 66;
+  const qw = width - 184;
+  const qh = 252;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(qx, qy, qw, qh);
+  ctx.fillStyle = "#ffe300";
+  ctx.fillRect(qx + 16, qy + 22, qw - 32, qh - 44);
 
-  // --- 2. Vote Bar (Middle) ---
-  const barY = 400;
-  const barH = 200;
-  const barMargin = 60;
-  const barWidth = width - barMargin * 2;
-  
-  // Draw the bar container (Black border?)
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = "#000000";
-  ctx.strokeRect(barMargin, barY, barWidth, barH);
-  
-  // Calculate split point
-  // Ensure min width for both sides so numbers fit
-  let splitX = barMargin + barWidth * redRatio;
-  const minSide = 160;
-  if (splitX < barMargin + minSide) splitX = barMargin + minSide;
-  if (splitX > barMargin + barWidth - minSide) splitX = barMargin + barWidth - minSide;
-  
-  // Red Side (Left)
-  ctx.fillStyle = "#FF3B30";
-  ctx.beginPath();
-  ctx.moveTo(barMargin, barY);
-  ctx.lineTo(splitX, barY);
-  // Puzzle connector
-  const tabY = barY + barH / 2;
-  const tabSize = 30;
-  ctx.lineTo(splitX, tabY - tabSize);
-  ctx.bezierCurveTo(splitX + tabSize, tabY - tabSize, splitX + tabSize, tabY + tabSize, splitX, tabY + tabSize);
-  ctx.lineTo(splitX, barY + barH);
-  ctx.lineTo(barMargin, barY + barH);
-  ctx.closePath();
-  ctx.fill();
-  
-  // Blue Side (Right)
-  ctx.fillStyle = "#007AFF";
-  ctx.beginPath();
-  ctx.moveTo(splitX, barY);
-  ctx.lineTo(barMargin + barWidth, barY);
-  ctx.lineTo(barMargin + barWidth, barY + barH);
-  ctx.lineTo(splitX, barY + barH);
-  // Puzzle connector (inverse)
-  ctx.lineTo(splitX, tabY + tabSize);
-  ctx.bezierCurveTo(splitX + tabSize, tabY + tabSize, splitX + tabSize, tabY - tabSize, splitX, tabY - tabSize);
-  ctx.lineTo(splitX, barY);
-  ctx.closePath();
-  ctx.fill();
-  
-  // Draw Border around bar again to be clean
-  ctx.strokeRect(barMargin, barY, barWidth, barH);
-  
-  // Numbers
-  ctx.fillStyle = "#FFFFFF";
-  ctx.font = `400 120px '${FONT_NUM}', impact, sans-serif`;
-  ctx.shadowColor = "rgba(0,0,0,0.5)";
-  ctx.shadowBlur = 10;
-  
-  // Red Count
+  ctx.fillStyle = "#111111";
+  ctx.font = `900 72px ${FONT_CN}`;
+  wrapText(ctx, input.question, width / 2, qy + 118, qw - 120, 82, 2, "center");
+
+  // Red/Blue scoreboard
+  const panelX = 94;
+  const panelY = 398;
+  const panelW = width - 188;
+  const barX = panelX + 92;
+  const barY = panelY + 72;
+  const barW = panelW - 184;
+  const barH = 86;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(barX - 4, barY - 4, barW + 8, 4);
+  ctx.fillRect(barX - 4, barY + barH, barW + 8, 4);
+  ctx.fillRect(barX - 4, barY, 4, barH);
+  ctx.fillRect(barX + barW, barY, 4, barH);
+
+  const minPart = 16;
+  let redW = Math.round((barW - minPart * 2) * redRatio) + minPart;
+  redW = Math.max(minPart, Math.min(barW - minPart, redW));
+  const blueW = barW - redW;
+
+  ctx.fillStyle = "#ef000f";
+  ctx.fillRect(barX + 6, barY + 6, redW - 6, barH - 12);
+  ctx.fillStyle = "#1238dd";
+  ctx.fillRect(barX + redW, barY + 6, blueW - 6, barH - 12);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `900 96px ${FONT_NUM}`;
   ctx.textAlign = "left";
-  ctx.fillText(input.redVotes.toString(), barMargin + 40, barY + barH / 2 + 40);
-  
-  // Blue Count
+  ctx.fillText(String(input.redVotes), panelX, panelY + 152);
   ctx.textAlign = "right";
-  ctx.fillText(input.blueVotes.toString(), barMargin + barWidth - 40, barY + barH / 2 + 40);
-  
-  // Labels (Red/Blue side)
-  ctx.font = `900 40px '${FONT_CN}', sans-serif`;
-  ctx.shadowBlur = 0;
-  ctx.fillText("要藏", barMargin + 160, barY + barH - 20); // Placeholder text, should probably infer from context or just "红方"
-  // Actually, we don't have side labels in input. Let's use "Red" / "Blue" or icons?
-  // The user image has "要藏" / "不要藏" (To Hide / Not To Hide).
-  // We can't know the specific stance text without input.
-  // We'll use "红方" (Red Side) and "蓝方" (Blue Side) as default, or "正方" / "反方".
-  ctx.textAlign = "left";
-  ctx.fillText("红方", barMargin + 20, barY + barH - 160);
-  ctx.textAlign = "right";
-  ctx.fillText("蓝方", barMargin + barWidth - 20, barY + barH - 160);
+  ctx.fillText(String(input.blueVotes), panelX + panelW, panelY + 152);
 
-  // --- 3. AI Comment (Bottom) ---
-  const commentY = 700;
-  const commentH = 300;
-  
-  // Background for comment area
-  ctx.fillStyle = "#1a1a1a";
-  ctx.fillRect(0, 680, width, 400); // Fill rest of bottom
-  
-  // Comment Bubble
-  ctx.fillStyle = "#FFFFFF";
-  // Draw a speech bubble
-  const bubbleX = 80;
-  const bubbleY = 740;
-  const bubbleW = width - 160;
-  const bubbleH = 240;
-  
-  ctx.beginPath();
-  ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, 40);
-  ctx.fill();
-  
-  // "AI Judge" Label
-  ctx.fillStyle = "#FFCC00";
-  ctx.beginPath();
-  ctx.roundRect(bubbleX + 40, bubbleY - 30, 200, 60, 30);
-  ctx.fill();
-  ctx.fillStyle = "#000000";
-  ctx.font = `900 36px '${FONT_CN}', sans-serif`;
-  ctx.textAlign = "center";
-  ctx.fillText("AI 评评理", bubbleX + 140, bubbleY + 10);
-  
-  // Comment Text
-  ctx.fillStyle = "#000000";
+  ctx.font = `900 52px ${FONT_CN}`;
   ctx.textAlign = "left";
-  ctx.font = `500 42px '${FONT_CN}', sans-serif`;
-  wrapText(ctx, input.myComment || "暂无评论...", bubbleX + 60, bubbleY + 100, bubbleW - 120, 60, 3);
+  ctx.fillText("红方", panelX + 108, panelY + 248);
+  ctx.textAlign = "right";
+  ctx.fillText("蓝方", panelX + panelW - 108, panelY + 248);
+
+  ctx.font = `800 34px ${FONT_CN}`;
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#fff2c1";
+  ctx.fillText(`总票数 ${totalVotes}`, width / 2, panelY + 306);
+
+  // AI comment panel (no QR)
+  const cx = 72;
+  const cy = 754;
+  const cw = width - 144;
+  const ch = 286;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(cx, cy, cw, ch);
+  ctx.fillStyle = "#111111";
+  ctx.fillRect(cx, cy, cw, 4);
+  ctx.fillRect(cx, cy + ch - 4, cw, 4);
+  ctx.fillRect(cx, cy, 4, ch);
+  ctx.fillRect(cx + cw - 4, cy, 4, ch);
+
+  ctx.fillStyle = "#111111";
+  ctx.font = `900 44px ${FONT_CN}`;
+  ctx.textAlign = "left";
+  ctx.fillText("我的 AI 分身如是说", cx + 24, cy + 58);
+  ctx.font = `700 34px ${FONT_CN}`;
+  wrapText(ctx, input.myComment || "暂无分身回答", cx + 24, cy + 120, cw - 48, 48, 3, "left");
 
   return await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {

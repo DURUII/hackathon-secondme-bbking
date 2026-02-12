@@ -9,7 +9,7 @@ export class DebateEngine {
   // 1. Recruiting Phase
   static async processRecruiting() {
     const pendingQuestions = await db.question.findMany({
-      where: { status: 'pending' },
+      where: { status: 'pending', deletedAt: null },
       include: { debateRoles: true },
       take: 1
     });
@@ -94,6 +94,7 @@ export class DebateEngine {
   static async processDebating() {
     const activeQuestions = await db.question.findMany({
       where: {
+        deletedAt: null,
         status: { startsWith: 'DEBATING' },
         nextTurnAt: { lte: new Date() }
       },

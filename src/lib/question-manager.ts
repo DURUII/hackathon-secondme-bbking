@@ -30,8 +30,8 @@ export class QuestionManager {
   static async findById(id: string) {
     const { db } = await import('@/lib/db');
 
-    return db.question.findUnique({
-      where: { id },
+    return db.question.findFirst({
+      where: { id, deletedAt: null },
       include: {
         votes: true,
       },
@@ -45,7 +45,7 @@ export class QuestionManager {
     const { db } = await import('@/lib/db');
 
     return db.question.findMany({
-      where: { userId },
+      where: { userId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -69,8 +69,9 @@ export class QuestionManager {
   static async delete(id: string) {
     const { db } = await import('@/lib/db');
 
-    return db.question.delete({
+    return db.question.update({
       where: { id },
+      data: { deletedAt: new Date() },
     });
   }
 }

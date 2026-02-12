@@ -15,6 +15,8 @@ interface FeedCardProps {
   arenaType: "toxic" | "comfort" | "rational";
   redRatio: number; // 0-1
   blueRatio: number; // 0-1
+  redVotes?: number;
+  blueVotes?: number;
   commentCount: number;
   previewComments: Array<{
     avatar?: string;
@@ -22,6 +24,10 @@ interface FeedCardProps {
     content: string;
     side: "red" | "blue";
   }>;
+  isSubscribed?: boolean;
+  onToggleSubscribe?: () => void;
+  canDelete?: boolean;
+  onDelete?: () => void;
   onClick?: () => void;
 }
 
@@ -41,8 +47,14 @@ export function FeedCard({
   arenaType,
   redRatio,
   blueRatio,
+  redVotes,
+  blueVotes,
   commentCount,
   previewComments,
+  isSubscribed = false,
+  onToggleSubscribe,
+  canDelete = false,
+  onDelete,
   onClick,
 }: FeedCardProps) {
   const ArenaIcon = ARENA_ICONS[arenaType]?.icon || Flame;
@@ -57,6 +69,29 @@ export function FeedCard({
     previewComments.find((c) => currentUserName && c.name === currentUserName)?.content ||
     previewComments[0]?.content ||
     "";
+    
+  // Calculate display votes
+  const displayRedVotes = redVotes ?? Math.round(commentCount * redRatio);
+  const displayBlueVotes = blueVotes ?? (commentCount - displayRedVotes);
+
+  // Ensure minimum visual width (0.5%) for both sides so neither completely disappears
+  const MIN_PERCENT = 0.5;
+  let redWidth = redRatio * 100;
+  let blueWidth = blueRatio * 100;
+
+  if (redWidth > 100 - MIN_PERCENT) {
+    redWidth = 100 - MIN_PERCENT;
+    blueWidth = MIN_PERCENT;
+  } else if (blueWidth > 100 - MIN_PERCENT) {
+    blueWidth = 100 - MIN_PERCENT;
+    redWidth = MIN_PERCENT;
+  } else if (redWidth < MIN_PERCENT) {
+    redWidth = MIN_PERCENT;
+    blueWidth = 100 - MIN_PERCENT;
+  } else if (blueWidth < MIN_PERCENT) {
+    blueWidth = MIN_PERCENT;
+    redWidth = 100 - MIN_PERCENT;
+  }
 
   useEffect(() => {
     setMounted(true);
@@ -140,24 +175,39 @@ export function FeedCard({
         {content}
       </p>
 
-      {/* Visual Bar */}
-      <div className="flex items-center gap-2 mb-4">
-        {commentCount > 0 ? (
-          <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden flex">
+      {/* Visual Bar - Compressed Section Style */}
+      <div className="mb-4">
+        {/* Numbers */}
+        <div className="flex items-end justify-between mb-1 px-1">
+          <span className="text-[11px] font-black text-[#fb0201] leading-none">{displayRedVotes}</span>
+          <span className="text-[11px] font-black text-[#011ee2] leading-none">{displayBlueVotes}</span>
+        </div>
+        
+        {/* Styled Bar */}
+        <div className="rounded-full border border-black/80 bg-white p-[2px] shadow-[0_1px_0_rgba(0,0,0,0.15)]">
+          <div className="h-1.5 rounded-full overflow-hidden flex">
             <div 
-              className="h-full bg-rose-900/80" 
-              style={{ width: `${redRatio * 100}%` }}
+              className="h-full bg-[#fb0201] transition-all duration-500" 
+              style={{ width: `${redWidth}%` }}
             />
             <div 
-              className="h-full bg-slate-800/80" 
-              style={{ width: `${blueRatio * 100}%` }}
+              className="h-full bg-[#011ee2] transition-all duration-500" 
+              style={{ width: `${blueWidth}%` }}
             />
           </div>
-        ) : (
-          <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden flex items-center justify-center">
-             <div className="w-full h-full bg-stone-100" />
+        </div>
+
+        {/* Labels */}
+        <div className="flex items-center justify-between mt-1.5 px-1">
+          <div className="flex flex-col items-start">
+            <span className="text-[10px] font-bold text-[#fb0201] leading-tight">支持</span>
+            <span className="text-[10px] text-stone-400 leading-tight">{Math.round(redRatio * 100)}%</span>
           </div>
-        )}
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] font-bold text-[#011ee2] leading-tight">反对</span>
+            <span className="text-[10px] text-stone-400 leading-tight">{Math.round(blueRatio * 100)}%</span>
+          </div>
+        </div>
       </div>
 
       {/* Preview Comments */}
@@ -175,7 +225,7 @@ export function FeedCard({
         </div>
       ) : (
         <div className="bg-stone-50 rounded-2xl p-3 mb-4 text-center">
-          <p className="text-xs text-stone-400">暂无评论，等待 AI 判官入场...</p>
+          <p className="text-xs text-stone-400">暂无理据，等待 AI 分身给出意见...</p>
         </div>
       )}
 
@@ -194,9 +244,32 @@ export function FeedCard({
             <span className="text-xs">{isSharing ? "生成中..." : "分享"}</span>
           </button>
         </div>
-        {commentCount === 0 && (
-           <span className="text-xs text-stone-300">1 人关注</span> 
-        )}
+        <div className="flex items-center gap-2">
+          {canDelete && (
+            <button
+              className="text-xs px-2.5 py-1 rounded-full border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete?.();
+              }}
+            >
+              删除
+            </button>
+          )}
+          <button
+            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              isSubscribed
+                ? "text-blue-700 border-blue-200 bg-blue-50 hover:bg-blue-100"
+                : "text-stone-500 border-stone-200 bg-white hover:bg-stone-50"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSubscribe?.();
+            }}
+          >
+            {isSubscribed ? "已关注" : "Follow"}
+          </button>
+        </div>
       </div>
 
       {mounted && previewUrl && createPortal(

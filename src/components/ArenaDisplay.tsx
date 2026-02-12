@@ -80,7 +80,7 @@ export function ArenaDisplay({
           <div className="text-center py-8">
             <div className="inline-flex items-center gap-2 text-stone-500">
               <Loader2 className="animate-spin w-5 h-5" />
-              <span className="text-sm">AI 正在评理中...</span>
+              <span className="text-sm">AI 分身正在整理意见...</span>
             </div>
           </div>
         ) : status === "pending" ? (

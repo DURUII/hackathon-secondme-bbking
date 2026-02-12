@@ -14,6 +14,7 @@ export async function POST() {
 
     // 2. Find recent questions NOT voted by this participant
     const recentQuestions = await db.question.findMany({
+      where: { deletedAt: null },
       orderBy: { createdAt: 'desc' },
       take: 10, // Limit to last 10 questions to avoid overloading
       include: {

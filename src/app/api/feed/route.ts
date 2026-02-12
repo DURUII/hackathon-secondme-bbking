@@ -65,6 +65,7 @@ export async function GET() {
     // 1. Fetch questions
     const [questions, totalParticipants, totalQuestions] = await Promise.all([
       db.question.findMany({
+        where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
         include: {
           votes: true,
@@ -76,7 +77,7 @@ export async function GET() {
         take: 20, 
       }),
       db.participant.count(),
-      db.question.count()
+      db.question.count({ where: { deletedAt: null } })
     ]);
 
     // 2. Transform to Feed format
@@ -131,6 +132,7 @@ export async function GET() {
 
       return {
         id: q.id,
+        creatorUserId: q.userId,
         userInfo: {
           name: creatorName,
           avatarUrl: creatorAvatar,

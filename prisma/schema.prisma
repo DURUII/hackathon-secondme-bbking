@@ -17,6 +17,7 @@ model User {
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   sessions          Session[]
+  questionSubscriptions QuestionSubscription[]
 
   @@map("users")
 }
@@ -41,13 +42,30 @@ model Question {
   round       Int      @default(0)
   nextTurnAt  DateTime? @map("next_turn_at")
   createdAt   DateTime @default(now()) @map("created_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   votes       Vote[]
   voteTasks   VoteTask[]
   debateRoles DebateRole[]
   debateTurns DebateTurn[]
+  subscriptions QuestionSubscription[]
 
   @@map("questions")
+}
+
+model QuestionSubscription {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  questionId String   @map("question_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([userId])
+  @@index([questionId])
+  @@map("question_subscriptions")
 }
 
 model DebateRole {

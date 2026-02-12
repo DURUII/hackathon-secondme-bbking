@@ -15,7 +15,7 @@ export async function processVoteTaskBatch(limit: number) {
   for (const task of tasks) {
     try {
       const [question, participant, existingVote] = await Promise.all([
-        db.question.findUnique({ where: { id: task.questionId } }),
+        db.question.findFirst({ where: { id: task.questionId, deletedAt: null } }),
         db.participant.findUnique({ where: { id: task.participantId } }),
         db.vote.findFirst({
           where: {
