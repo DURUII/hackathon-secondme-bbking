@@ -114,3 +114,28 @@
 - 函数必须短执行、可重入、幂等。
 - 数据库连接池建议启用（Prisma + pgBouncer 或托管连接池）。
 - 所有写操作必须容忍重复触发（唯一约束 + upsert）。
+
+### 8.1 Supabase 连接配置（重要）
+
+在 Vercel 上必须优先使用连接池，否则容易出现连接数耗尽（`remaining connection slots are reserved`）：
+
+```env
+# Runtime on Vercel: use Supabase pooler
+DATABASE_URL="postgresql://postgres.<project-ref>:[PASSWORD]@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true&connection_limit=1"
+
+# Migrations only: direct DB connection
+DIRECT_URL="postgresql://postgres:[PASSWORD]@db.<project-ref>.supabase.co:5432/postgres?sslmode=require"
+```
+
+说明：
+- `DATABASE_URL`：应用运行时使用（API 请求、页面渲染），必须走 pooler。
+- `DIRECT_URL`：仅用于迁移（`prisma migrate` / `db execute`），走直连更稳定。
+- 修改环境变量后需重新部署。
+
+快速验证：
+
+```bash
+curl -s https://<your-domain>/api/feed
+```
+
+返回 `success: true` 代表数据库连通恢复。
