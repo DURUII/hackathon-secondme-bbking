@@ -10,6 +10,7 @@ export class DebateEngine {
   static async processRecruiting() {
     const pendingQuestions = await db.question.findMany({
       where: { status: 'pending' },
+      include: { debateRoles: true },
       take: 1
     });
 
@@ -21,14 +22,20 @@ export class DebateEngine {
       take: 10
     });
 
-    // MVP Requirement: Need at least 2 participants (or just the question owner)
-    // Check if question owner is available as a participant
     const question = pendingQuestions[0];
-    const questionOwner = question.userId
-      ? await db.participant.findFirst({
-          where: { secondmeId: question.userId }
-        })
-      : null;
+
+    // Idempotency: if roles already exist (e.g. previous partial run), just move forward.
+    if (question.debateRoles.length > 0) {
+      await db.question.update({
+        where: { id: question.id },
+        data: {
+          status: 'DEBATING_R1',
+          round: 1,
+          nextTurnAt: new Date(),
+        },
+      });
+      return { recruited: 0, resumed: 1 };
+    }
 
     // For MVP: If we have at least 1 participant and the question owner, we can start
     // This allows single-user testing while still having a "debate"
@@ -39,19 +46,33 @@ export class DebateEngine {
       return { recruited: 0, waitingFor: minParticipants - participants.length };
     }
 
-    // Shuffle and pick 6
+    // Shuffle and pick up to 6 participants
     const shuffled = participants.sort(() => 0.5 - Math.random()).slice(0, 6);
+    if (shuffled.length === 0) {
+      return { recruited: 0, waitingFor: 1 };
+    }
     
-    // Assign roles
-    for (let i = 0; i < 6; i++) {
-      await db.debateRole.create({
-        data: {
+    // Assign roles (bounded by available participants)
+    for (let i = 0; i < shuffled.length; i++) {
+      await db.debateRole.upsert({
+        where: {
+          questionId_participantId: {
+            questionId: question.id,
+            participantId: shuffled[i].id,
+          },
+        },
+        update: {
+          role: ROLES_ORDER[i],
+          initialStance: i % 2 === 0 ? 100 : -100,
+          currentStance: i % 2 === 0 ? 100 : -100,
+        },
+        create: {
           questionId: question.id,
           participantId: shuffled[i].id,
           role: ROLES_ORDER[i],
           initialStance: i % 2 === 0 ? 100 : -100, // Pro = 100, Con = -100
-          currentStance: i % 2 === 0 ? 100 : -100
-        }
+          currentStance: i % 2 === 0 ? 100 : -100,
+        },
       });
     }
 
