@@ -23,22 +23,24 @@ export function DebateCommentCard({
   return (
     <div className="flex gap-4 items-start group">
       {/* Avatar */}
-      <div className={`relative w-12 h-12 rounded-full border-[3px] flex-shrink-0 overflow-hidden bg-stone-800 ${
-        isRed ? 'border-[#FF4D4F]' : 'border-[#1890FF]'
-      }`}>
-        {avatarUrl ? (
-          <img 
-            src={avatarUrl} 
-            alt={name} 
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-sm font-bold text-stone-400">
-            {name[0]}
-          </div>
-        )}
+      <div className="relative w-12 h-12 flex-shrink-0">
+        <div className={`w-full h-full rounded-full border-[3px] overflow-hidden bg-stone-800 ${
+          isRed ? 'border-[#FF4D4F]' : 'border-[#1890FF]'
+        }`}>
+          {avatarUrl ? (
+            <img 
+              src={avatarUrl} 
+              alt={name} 
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-sm font-bold text-stone-400">
+              {name[0]}
+            </div>
+          )}
+        </div>
         {/* AI Badge */}
-        <div className={`absolute -bottom-0.5 -right-0.5 ${isRed ? 'bg-[#FF4D4F]' : 'bg-[#1890FF]'} p-0.5 rounded-full border border-[#1E1E1E]`}>
+        <div className={`absolute -bottom-0.5 -right-0.5 ${isRed ? 'bg-[#FF4D4F]' : 'bg-[#1890FF]'} p-0.5 rounded-full border border-[#1E1E1E] z-10`}>
            <Brain className="w-2.5 h-2.5 text-white" />
         </div>
       </div>

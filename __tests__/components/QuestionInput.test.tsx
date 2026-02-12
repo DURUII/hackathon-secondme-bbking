@@ -17,7 +17,7 @@ describe('QuestionInput', () => {
 
   // Helper to expand the input
   const expandInput = async () => {
-    const trigger = screen.getByText('有什么想让 AI 评评理？');
+    const trigger = screen.getByText(/发布一个没有标答的辩题/);
     await userEvent.click(trigger);
   };
 
@@ -25,86 +25,46 @@ describe('QuestionInput', () => {
     render(
       <QuestionInput
         onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
         isLoading={false}
       />
     );
 
-    expect(screen.getByText('有什么想让 AI 评评理？')).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('输入你的社交难题...')).not.toBeInTheDocument();
+    expect(screen.getByText(/发布一个没有标答的辩题/)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('请输入你需要大家评理的事情经过...')).not.toBeInTheDocument();
   });
 
   it('should expand when clicked', async () => {
     render(
       <QuestionInput
         onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
         isLoading={false}
       />
     );
 
     await expandInput();
 
-    expect(screen.getByPlaceholderText('输入你的社交难题...')).toBeInTheDocument();
-    expect(screen.getByText('毒舌')).toBeInTheDocument();
-    expect(screen.getByText('安慰')).toBeInTheDocument();
-    expect(screen.getByText('理性')).toBeInTheDocument();
-    expect(screen.getByText('发布')).toBeInTheDocument();
-  });
-
-  it('should switch arena when clicked', async () => {
-    render(
-      <QuestionInput
-        onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
-        isLoading={false}
-      />
-    );
-
-    await expandInput();
-
-    const comfortBtn = screen.getByText('安慰').closest('button');
-    await userEvent.click(comfortBtn!);
-
-    expect(mockOnArenaChange).toHaveBeenCalledWith('comfort');
-  });
-
-  it('should show toxic as default arena', async () => {
-    render(
-      <QuestionInput
-        onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
-        isLoading={false}
-      />
-    );
-
-    await expandInput();
-
-    const toxicBtn = screen.getByText('毒舌').closest('button');
-    // Check if it has selected styles (border-stone-900)
-    expect(toxicBtn).toHaveClass('border-stone-900');
+    expect(screen.getByPlaceholderText('请输入你需要大家评理的事情经过...')).toBeInTheDocument();
+    expect(screen.getByText('发布话题')).toBeInTheDocument();
   });
 
   it('should call onSubmit when form is submitted', async () => {
     render(
       <QuestionInput
         onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
         isLoading={false}
       />
     );
 
     await expandInput();
 
-    const textarea = screen.getByPlaceholderText('输入你的社交难题...');
+    const textarea = screen.getByPlaceholderText('请输入你需要大家评理的事情经过...');
     await userEvent.type(textarea, '相亲男让我AA这杯咖啡');
 
-    const submitBtn = screen.getByText('发布');
+    const submitBtn = screen.getByText('发布话题');
     await userEvent.click(submitBtn);
 
     expect(mockOnSubmit).toHaveBeenCalledWith({
       content: '相亲男让我AA这杯咖啡',
-      arenaType: 'toxic',
     });
   });
 
@@ -112,14 +72,13 @@ describe('QuestionInput', () => {
     render(
       <QuestionInput
         onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
         isLoading={false}
       />
     );
 
     await expandInput();
 
-    const submitBtn = screen.getByText('发布');
+    const submitBtn = screen.getByText('发布话题');
     await userEvent.click(submitBtn);
 
     expect(mockOnSubmit).not.toHaveBeenCalled();
@@ -137,19 +96,17 @@ describe('QuestionInput', () => {
     const { rerender } = render(
       <QuestionInput
         onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
         isLoading={false}
       />
     );
     
     await expandInput();
-    const textarea = screen.getByPlaceholderText('输入你的社交难题...');
+    const textarea = screen.getByPlaceholderText('请输入你需要大家评理的事情经过...');
     await userEvent.type(textarea, 'test');
     
     rerender(
       <QuestionInput
         onSubmit={mockOnSubmit}
-        onArenaChange={mockOnArenaChange}
         isLoading={true}
       />
     );

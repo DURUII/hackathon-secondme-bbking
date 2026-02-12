@@ -110,20 +110,18 @@ export function JudgmentCard({
             </div>
           </div>
           
-          <div className="relative h-12 w-full rounded-lg overflow-hidden flex shadow-inner bg-black/20">
-            <div 
-              className="h-full bg-[#FF4D4F] flex items-center justify-start pl-4 relative transition-all duration-500" 
-              style={{ width: `${redWidth}%` }}
-            >
-              <span className="text-white font-black text-xl z-10 drop-shadow-md">{redPercent}%</span>
-            </div>
-            <div className="absolute top-0 bottom-0 w-2 bg-white transform -skew-x-[20deg] z-20 left-[50%] -ml-1 border-x border-black/10" style={{ left: `${redWidth}%` }}></div>
-            <div 
-              className="h-full bg-[#1890FF] flex items-center justify-end pr-4 relative transition-all duration-500" 
-              style={{ width: `${blueWidth}%` }}
-            >
-              <span className="text-white font-black text-xl z-10 drop-shadow-md">{bluePercent}%</span>
-            </div>
+          <div 
+            className="relative h-12 w-full rounded-lg overflow-hidden flex shadow-inner bg-black/20 items-center"
+            style={{
+              background: `linear-gradient(110deg, #FF4D4F calc(${redWidth}% - 2px), white calc(${redWidth}% - 2px), white calc(${redWidth}% + 2px), #1890FF calc(${redWidth}% + 2px))`
+            }}
+          >
+            <div className="absolute left-4 h-full flex items-center z-10">
+               <span className="text-white font-black text-xl drop-shadow-md">{redPercent}%</span>
+             </div>
+             <div className="absolute right-4 h-full flex items-center z-10">
+               <span className="text-white font-black text-xl drop-shadow-md">{bluePercent}%</span>
+             </div>
           </div>
         </div>
 

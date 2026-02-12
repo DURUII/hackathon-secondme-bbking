@@ -60,7 +60,7 @@ export function QuestionInput({
         onClick={() => setIsExpanded(true)}
         className="w-full max-w-md mx-auto bg-[#1E1E1E] border border-white/10 p-4 flex items-center gap-4 cursor-text hover:border-white/20 transition-all shadow-lg rounded-xl group"
       >
-        <span className="text-white/30 font-sans text-sm font-medium group-hover:text-white/50 transition-colors">发布一个新的评理话题...</span>
+        <span className="text-white/30 font-sans text-sm font-medium group-hover:text-white/50 transition-colors">发布一个没有标答的辩题...</span>
       </div>
     );
   }
