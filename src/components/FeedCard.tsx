@@ -23,8 +23,6 @@ interface FeedCardProps {
   previewComments?: any[]; // Fallback
   isSubscribed?: boolean;
   onToggleSubscribe?: () => void;
-  canDelete?: boolean;
-  onDelete?: () => void;
   onClick?: () => void;
 }
 
@@ -45,8 +43,6 @@ export function FeedCard({
   commentCount,
   comments = [],
   previewComments = [],
-  canDelete = false,
-  onDelete,
   onClick,
 }: FeedCardProps) {
   const [mounted, setMounted] = useState(false);
@@ -99,45 +95,27 @@ export function FeedCard({
       <div className="p-5">
         {/* 1. Header */}
         <div className="flex flex-col gap-3 mb-5">
-          <div className="flex items-start justify-end">
-             {canDelete && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete?.();
-                  }}
-                  className="text-stone-500 hover:text-red-500 text-xs"
-                >
-                  删除
-                </button>
-              )}
-          </div>
           <h3 className="text-white font-bold text-xl leading-snug tracking-tight font-display">
             {content}
           </h3>
         </div>
 
         {/* 2. Battle Bar */}
-        <div className="relative h-12 w-full rounded-lg overflow-hidden flex mb-6 shadow-inner">
-           {/* Red Side */}
-           <div 
-             className="h-full bg-[#FF4D4F] flex items-center justify-start pl-3 relative transition-all duration-500"
-             style={{ width: `${redWidth}%` }}
-           >
-              <span className="text-white font-black text-2xl z-10 drop-shadow-sm">{displayRedVotes}</span>
-           </div>
+        <div 
+          className="relative h-12 w-full rounded-lg overflow-hidden flex mb-6 shadow-inner items-center"
+          style={{
+            background: `linear-gradient(110deg, #FF4D4F calc(${redWidth}% - 2px), white calc(${redWidth}% - 2px), white calc(${redWidth}% + 2px), #1890FF calc(${redWidth}% + 2px))`
+          }}
+        >
+           {/* Red Vote Count */}
+            <div className="absolute left-3 h-full flex items-center z-10">
+               <span className="text-white font-black text-2xl drop-shadow-sm">{displayRedVotes}</span>
+            </div>
 
-           {/* Diagonal Divider */}
-           <div className="absolute top-0 bottom-0 w-2 bg-white transform -skew-x-[20deg] z-20 left-[50%] -ml-1 border-x border-black/10" 
-                style={{ left: `${redWidth}%` }}></div>
-
-           {/* Blue Side */}
-           <div 
-             className="h-full bg-[#1890FF] flex items-center justify-end pr-3 relative transition-all duration-500"
-             style={{ width: `${blueWidth}%` }}
-           >
-              <span className="text-white font-black text-2xl z-10 drop-shadow-sm">{displayBlueVotes}</span>
-           </div>
+            {/* Blue Vote Count */}
+            <div className="absolute right-3 h-full flex items-center z-10">
+               <span className="text-white font-black text-2xl drop-shadow-sm">{displayBlueVotes}</span>
+            </div>
         </div>
 
         {/* 3. Comments List */}
@@ -146,18 +124,20 @@ export function FeedCard({
             <div key={idx} className="flex gap-3 items-start">
               {/* Avatar & Name */}
               <div className="flex flex-col items-center gap-1 flex-shrink-0 w-10">
-                <div className={`relative w-10 h-10 rounded-full border-[3px] overflow-hidden bg-stone-800 ${
-                  comment.side === 'red' ? 'border-[#FF4D4F]' : 'border-[#1890FF]'
-                }`}>
-                  {comment.avatarUrl ? (
-                    <img src={comment.avatarUrl} alt={comment.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-xs font-bold text-stone-400">
-                      {comment.name[0]}
-                    </div>
-                  )}
+                <div className="relative w-10 h-10">
+                  <div className={`w-full h-full rounded-full border-[3px] overflow-hidden bg-stone-800 ${
+                    comment.side === 'red' ? 'border-[#FF4D4F]' : 'border-[#1890FF]'
+                  }`}>
+                    {comment.avatarUrl ? (
+                      <img src={comment.avatarUrl} alt={comment.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-xs font-bold text-stone-400">
+                        {comment.name[0]}
+                      </div>
+                    )}
+                  </div>
                   {/* AI Badge */}
-                  <div className="absolute bottom-0 right-0 bg-white text-black text-[8px] font-black px-1 rounded-tl-md leading-tight">
+                  <div className="absolute bottom-0 right-0 bg-white text-black text-[8px] font-black px-1 rounded-tl-md leading-tight z-10 shadow-sm">
                     AI
                   </div>
                 </div>

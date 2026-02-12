@@ -120,28 +120,23 @@ export function ArenaDisplay({
         ) : (
           <div className="space-y-8">
             {/* Battle Bar */}
-            <div className="relative h-12 w-full rounded-lg overflow-hidden flex shadow-inner">
+            <div 
+              className="relative h-12 w-full rounded-lg overflow-hidden flex shadow-inner items-center"
+              style={{
+                background: `linear-gradient(110deg, #FF4D4F calc(${animatedRed * 100}% - 2px), white calc(${animatedRed * 100}% - 2px), white calc(${animatedRed * 100}% + 2px), #1890FF calc(${animatedRed * 100}% + 2px), #1890FF calc(${(animatedRed + animatedBlue) * 100}%), transparent calc(${(animatedRed + animatedBlue) * 100}%))`
+              }}
+            >
                {/* Red Side */}
-               <div 
-                 className="h-full bg-[#FF4D4F] flex items-center justify-start pl-4 relative transition-all duration-500"
-                 style={{ width: `${animatedRed * 100}%` }}
-               >
+               <div className="absolute left-4 h-full flex items-center z-10">
                   {animatedRed > 0.1 && (
-                    <span className="text-white font-black text-2xl z-10 drop-shadow-sm">{redVotes}</span>
+                    <span className="text-white font-black text-2xl drop-shadow-sm">{redVotes}</span>
                   )}
                </div>
 
-               {/* Diagonal Divider */}
-               <div className="absolute top-0 bottom-0 w-2 bg-white transform -skew-x-[20deg] z-20 left-[50%] -ml-1 border-x border-black/10" 
-                    style={{ left: `${animatedRed * 100}%` }}></div>
-
                {/* Blue Side */}
-               <div 
-                 className="h-full bg-[#1890FF] flex items-center justify-end pr-4 relative transition-all duration-500"
-                 style={{ width: `${animatedBlue * 100}%` }}
-               >
+               <div className="absolute right-4 h-full flex items-center z-10">
                   {animatedBlue > 0.1 && (
-                    <span className="text-white font-black text-2xl z-10 drop-shadow-sm">{blueVotes}</span>
+                    <span className="text-white font-black text-2xl drop-shadow-sm">{blueVotes}</span>
                   )}
                </div>
             </div>

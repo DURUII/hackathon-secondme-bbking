@@ -133,34 +133,6 @@ export default function PilFeature() {
     fetchFeed();
   }, [fetchFeed]);
 
-  const handleDeleteQuestion = useCallback(async (questionId: string) => {
-    const ok = window.confirm("确认删除这个问题？删除后不会在列表展示。");
-    if (!ok) return;
-
-    const prevFeedItems = feedItems;
-    const prevExpandedId = expandedId;
-
-    setFeedItems((prev) => prev.filter((item) => item.id !== questionId));
-    setExpandedId((prev) => (prev === questionId ? null : prev));
-
-    try {
-      const res = await fetch("/api/question/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-    } catch (error) {
-      setFeedItems(prevFeedItems);
-      setExpandedId(prevExpandedId);
-      console.error("Failed to delete question", error);
-      alert("删除失败，请重试");
-    }
-  }, [expandedId, feedItems]);
-
   // Fetch User Info
   useEffect(() => {
     async function fetchUserInfo() {
@@ -300,7 +272,7 @@ export default function PilFeature() {
   return (
     <div className="min-h-screen bg-[#121212] pb-20 font-sans">
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-[#121212]/80 backdrop-blur-xl border-b border-white/5 px-4 py-4">
+      <header className="sticky top-0 z-50 bg-[#121212]/80 backdrop-blur-xl border-b border-white/5 px-4 py-4">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
              <div className="relative">
@@ -377,14 +349,6 @@ export default function PilFeature() {
                     <div className="relative group">
                       {/* Control Bar for Expanded View */}
                       <div className="absolute top-4 right-4 z-20 flex gap-2">
-                         {currentUserId && item.creatorUserId === currentUserId && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteQuestion(item.id); }}
-                            className="px-3 py-1.5 text-xs font-bold text-white/50 hover:text-[#FF4D4F] bg-black/50 hover:bg-black/80 backdrop-blur-md rounded-lg transition-all border border-white/10"
-                          >
-                            删除
-                          </button>
-                        )}
                         <button 
                           onClick={(e) => { e.stopPropagation(); setExpandedId(null); }}
                           className="px-3 py-1.5 text-xs font-bold text-white/70 hover:text-white bg-black/50 hover:bg-black/80 backdrop-blur-md rounded-lg transition-all border border-white/10"
@@ -417,8 +381,6 @@ export default function PilFeature() {
                       commentCount={item.commentCount}
                       previewComments={item.previewComments}
                       comments={item.structuredComments}
-                      canDelete={Boolean(currentUserId && item.creatorUserId === currentUserId)}
-                      onDelete={() => handleDeleteQuestion(item.id)}
                       onClick={() => handleOpenItem(item.id)}
                     />
                   )}
