@@ -197,6 +197,15 @@ export default function PilFeature() {
     }
   };
 
+  const handleOpenItem = useCallback((itemId: string) => {
+    setExpandedId(itemId);
+    fetch("/api/question/view", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId: itemId }),
+    }).catch((err) => console.error("Failed to enqueue question view", err));
+  }, []);
+
   return (
     <div className="min-h-screen bg-stone-50 pb-20">
       {/* Header */}
@@ -284,7 +293,7 @@ export default function PilFeature() {
                       {...item}
                       username={item.userInfo.name}
                       avatarUrl={item.userInfo.avatarUrl}
-                      onClick={() => setExpandedId(item.id)}
+                      onClick={() => handleOpenItem(item.id)}
                     />
                   )}
                 </div>

@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getUserFromToken, getOrCreateParticipant } from '@/lib/auth-helper';
+import { db } from '@/lib/db';
+import { VoteTaskManager } from '@/lib/vote-task-manager';
+
+const RECENT_QUESTION_LIMIT = 20;
+const RECENT_WINDOW_HOURS = 72;
 
 export async function POST() {
   try {
@@ -16,9 +21,21 @@ export async function POST() {
     // Register or update participant
     const participant = await getOrCreateParticipant(user);
 
+    // Queue this participant to vote on recent questions (async eventual consistency).
+    const recentSince = new Date(Date.now() - RECENT_WINDOW_HOURS * 60 * 60 * 1000);
+    const recentQuestions = await db.question.findMany({
+      where: { createdAt: { gte: recentSince } },
+      orderBy: { createdAt: 'desc' },
+      take: RECENT_QUESTION_LIMIT,
+      select: { id: true },
+    });
+    const questionIds = recentQuestions.map((q) => q.id);
+    const queueResult = await VoteTaskManager.enqueueForParticipant(participant.id, questionIds);
+
     console.log('[REGISTER] Participant registered:', {
       id: participant.id,
       secondmeId: participant.secondmeId,
+      queuedTasks: queueResult.enqueued,
     });
 
     return NextResponse.json({
@@ -27,6 +44,7 @@ export async function POST() {
         id: participant.id,
         name: participant.name,
         isActive: participant.isActive,
+        queuedTasks: queueResult.enqueued,
       },
     });
   } catch (error) {

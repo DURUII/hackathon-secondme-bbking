@@ -3,8 +3,10 @@ import { getUserFromToken, getOrCreateParticipant } from '@/lib/auth-helper';
 import { QuestionManager } from '@/lib/question-manager';
 import { VoteManager } from '@/lib/vote-manager';
 import { db } from '@/lib/db';
+import { VoteTaskManager } from '@/lib/vote-task-manager';
 
 const VALID_ARENA_TYPES = ['toxic', 'comfort', 'rational'];
+const QUESTION_FANOUT_LIMIT = 50;
 
 export async function POST(request: Request) {
   try {
@@ -54,8 +56,10 @@ export async function POST(request: Request) {
     });
 
     // MVP: Immediately have user's AI分身 vote on their own question
+    let selfParticipantId: string | null = null;
     try {
       const participant = await getOrCreateParticipant(user);
+      selfParticipantId = participant.id;
       const voteComment = await generateAIVote(user.accessToken, content.trim(), normalizedArenaType);
 
       // Randomly choose pro (+1) or con (-1) for debate
@@ -72,6 +76,27 @@ export async function POST(request: Request) {
     } catch (voteError) {
       console.error('[PUBLISH] Failed to cast AI vote:', voteError);
       // Don't fail the publish if voting fails
+    }
+
+    // Queue async votes for other active participants.
+    try {
+      const participants = await db.participant.findMany({
+        where: {
+          isActive: true,
+          ...(selfParticipantId ? { id: { not: selfParticipantId } } : {}),
+        },
+        select: { id: true },
+        take: QUESTION_FANOUT_LIMIT,
+      });
+      const participantIds = participants.map((p) => p.id);
+      const queueResult = await VoteTaskManager.enqueueForQuestion(question.id, participantIds);
+      console.log('[PUBLISH] vote_tasks enqueued:', {
+        questionId: question.id,
+        participants: participantIds.length,
+        enqueued: queueResult.enqueued,
+      });
+    } catch (queueError) {
+      console.error('[PUBLISH] Failed to enqueue vote tasks:', queueError);
     }
 
     return NextResponse.json({

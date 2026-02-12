@@ -43,6 +43,7 @@ model Question {
   createdAt   DateTime @default(now()) @map("created_at")
 
   votes       Vote[]
+  voteTasks   VoteTask[]
   debateRoles DebateRole[]
   debateTurns DebateTurn[]
 
@@ -90,6 +91,7 @@ model Vote {
   comment       String
   createdAt     DateTime @default(now()) @map("created_at")
 
+  @@unique([questionId, participantId])
   @@map("votes")
 }
 
@@ -106,6 +108,26 @@ model Participant {
 
   debateRoles   DebateRole[]
   debateTurns   DebateTurn[]
+  voteTasks     VoteTask[]
 
   @@map("participants")
+}
+
+model VoteTask {
+  id            String      @id @default(cuid())
+  questionId    String      @map("question_id")
+  participantId String      @map("participant_id")
+  status        String      @default("pending") // pending, running, done, failed
+  attempts      Int         @default(0)
+  lastError     String?     @map("last_error")
+  nextRetryAt   DateTime?   @map("next_retry_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  question      Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, participantId])
+  @@index([status, nextRetryAt])
+  @@map("vote_tasks")
 }

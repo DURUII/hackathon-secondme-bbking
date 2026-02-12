@@ -12,8 +12,18 @@ export class VoteManager {
   static async createVote(input: CreateVoteInput) {
     const { db } = await import('@/lib/db');
 
-    return db.vote.create({
-      data: {
+    return db.vote.upsert({
+      where: {
+        questionId_participantId: {
+          questionId: input.questionId,
+          participantId: input.participantId,
+        },
+      },
+      update: {
+        position: input.position,
+        comment: input.comment,
+      },
+      create: {
         questionId: input.questionId,
         participantId: input.participantId,
         position: input.position,
