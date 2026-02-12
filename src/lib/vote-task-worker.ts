@@ -6,6 +6,7 @@ import { VoteManager } from "@/lib/vote-manager";
 
 export async function processVoteTaskBatch(limit: number) {
   const tasks = await VoteTaskManager.claimPending(limit);
+  const allowMockVote = process.env.ALLOW_MOCK_VOTE === "true";
 
   let processed = 0;
   let failed = 0;
@@ -38,6 +39,10 @@ export async function processVoteTaskBatch(limit: number) {
       }
 
       const token = await SecondMePollEngine.getFreshToken(participant.id);
+      if (!token && !allowMockVote) {
+        throw new Error("Missing participant token; mock vote disabled");
+      }
+
       const voteResult = token
         ? await SecondMePollEngine.callSecondMeForVote({
             participantToken: token,

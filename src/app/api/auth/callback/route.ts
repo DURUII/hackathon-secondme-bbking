@@ -254,19 +254,20 @@ export async function GET(request: Request) {
     if (userResp.ok) {
         const userJson = await userResp.json();
         const userInfo = userJson.data;
-        if (userInfo && userInfo.id) {
-            const secondmeUserId = String(userInfo.id);
+        const secondmeUserId = userInfo?.id ?? userInfo?.userId;
+        if (userInfo && secondmeUserId) {
+            const normalizedSecondmeUserId = String(secondmeUserId);
             console.log(`${logPrefix} DB_UPSERT START`, { secondmeUserId });
             
             await db.user.upsert({
-                where: { secondmeUserId },
+                where: { secondmeUserId: normalizedSecondmeUserId },
                 update: {
                     accessToken: accessToken,
                     refreshToken: refreshToken || "",
                     tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
                 },
                 create: {
-                    secondmeUserId,
+                    secondmeUserId: normalizedSecondmeUserId,
                     accessToken: accessToken,
                     refreshToken: refreshToken || "",
                     tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
@@ -276,7 +277,7 @@ export async function GET(request: Request) {
             
             // Also upsert Participant
             await db.participant.upsert({
-                where: { secondmeId: secondmeUserId },
+                where: { secondmeId: normalizedSecondmeUserId },
                 update: {
                     lastActiveAt: new Date(),
                     name: userInfo.name || userInfo.nickname || '用户',
@@ -284,7 +285,7 @@ export async function GET(request: Request) {
                     isActive: true
                 },
                 create: {
-                    secondmeId: secondmeUserId,
+                    secondmeId: normalizedSecondmeUserId,
                     name: userInfo.name || userInfo.nickname || '用户',
                     avatarUrl: userInfo.avatar || userInfo.avatarUrl,
                     isActive: true

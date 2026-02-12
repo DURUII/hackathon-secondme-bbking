@@ -76,6 +76,69 @@ npm test -- __tests__/components/QuestionInput.test.tsx
 
 ---
 
+## Latest Progress (2026-02-12)
+
+### 本轮已完成
+
+1. OAuth 回调地址策略修复
+   - `src/lib/secondme-server.ts` 的 `getRedirectUri()` 改为只读取 `SECONDME_REDIRECT_URI`，不再自动探测 Vercel preview 域名。
+   - 目标：彻底避免 `Redirect URI mismatch`（preview 域名被拼到 `redirect_uri`）。
+
+2. 投票链路升级为异步队列（Vercel 友好）
+   - 新增 `VoteTask` 模型与管理器：
+     - `prisma/schema.prisma`
+     - `src/lib/vote-task-manager.ts`
+     - `src/lib/vote-task-worker.ts`
+   - `Vote` 增加唯一约束 `@@unique([questionId, participantId])`，投票写入改为 upsert（防重复计票）：
+     - `src/lib/vote-manager.ts`
+   - 发布/注册/回填改为入队驱动：
+     - `src/app/api/publish/route.ts`
+     - `src/app/api/register/route.ts`
+     - `src/app/api/backfill/route.ts`
+   - Worker 消费统一到：
+     - `src/app/api/cron/sync/route.ts`
+     - `src/app/api/cron/heartbeat/route.ts`（Hobby 低频 cron 的在线补偿）
+
+3. 前端“浏览即参与”接入
+   - 新增 `POST /api/question/view`：
+     - `src/app/api/question/view/route.ts`
+   - 用户点开 Feed 卡片时触发入队：
+     - `src/components/SideFeature.tsx`
+
+4. 连接压力与幂等性修复
+   - 前端轮询降频以缓解免费配额和连接峰值：
+     - heartbeat: 5s -> 30s
+     - feed polling: 3s -> 10s
+   - 辩论招募改为幂等，避免重复创建 `DebateRole` 导致 unique 冲突：
+     - `src/lib/debate-engine.ts`
+
+5. 文档与迁移
+   - 新增架构文档：
+     - `docs/TECH.md`（强实时体验 + 异步最终一致、队列、Vercel 部署建议）
+   - 在 `TECH.md` 补充 Supabase 连接策略：
+     - `DATABASE_URL` 使用 pooler (`:6543`)
+     - `DIRECT_URL` 使用直连 (`:5432`)
+   - Prisma 迁移已落地并验证：
+     - `prisma/migrations/20260212104500_add_vote_task_queue_and_vote_uniqueness/migration.sql`
+     - `prisma migrate status` -> `Database schema is up to date`
+
+### 线上状态（最新复测）
+
+- `GET /api/feed`：`success: true`（已恢复）
+- `POST /api/cron/heartbeat`：`success: true`（最新复测通过）
+- OAuth 登录跳转：`redirect_uri` 已指向 `https://pli-one.vercel.app/api/auth/callback`
+
+### 关键运维结论
+
+- Vercel Hobby 不支持高频 cron（`*/5 * * * *`），只能每日一次。
+- 实时推进依赖在线心跳小批量消费（`/api/cron/heartbeat`）+ 低频 cron 兜底。
+- 若再次出现 `P2037/P1017`，优先检查：
+  1. `DATABASE_URL` 是否为 Supabase pooler
+  2. 密码是否 URL 编码
+  3. 是否有旧部署仍在高频触发
+
+---
+
 ## "帮我评评理" MVP 开发状态
 
 ### 测试结果
@@ -238,3 +301,48 @@ src/
 - **"帮我评评理" MVP 已可用，开发环境支持Mock投票模式。**
 - **已适配 Vercel 部署环境，支持 Cron Job 自动同步数据。**
 - 用户登录后自动注册为参与者，发布问题 -> 收集投票 -> 生成判决书。**部署到Vercel后需要真实SecondMe用户参与投票。**
+
+---
+
+## 本轮状态更新 (2026-02-12)
+
+### 已完成
+
+1. 鉴权与用户标识兼容修复  
+   - 修复 SecondMe 返回 `userId` 时被误判未登录的问题（兼容 `id/userId`）。  
+   - 影响文件：`src/lib/auth-helper.ts`, `src/app/api/secondme/user/info/route.ts`, `src/app/api/auth/callback/route.ts`
+
+2. 发布流程稳定性修复  
+   - 增加发布并发防重、失败回滚、错误提示。  
+   - 影响文件：`src/components/SideFeature.tsx`
+
+3. 投票引擎改造（结构化输出）  
+   - 投票从 `chat/stream` 调整为 `act/stream + actionControl`。  
+   - 增强 SSE 解析与结果校验，禁止泛化文案（如“我支持这个观点”）直接落库。  
+   - 影响文件：`src/lib/secondme-poll-engine.ts`, `src/lib/vote-task-worker.ts`, `src/app/api/publish/route.ts`
+
+4. MVP 聚焦（先做提问 + 回答 + 票数 + 理据）  
+   - 暂时隐藏辩论展示与“查看完整判决”入口。  
+   - 票数显示改为仅基于 `votes`，不再混入 debate turns。  
+   - 影响文件：`src/components/ArenaDisplay.tsx`, `src/app/api/feed/route.ts`, `src/components/FeedCard.tsx`
+
+5. 分享功能第一版落地  
+   - 点击分享 -> 弹窗预览 -> 点击下载。  
+   - 生成模板图包含：问题、红蓝票面、总票数、AI 分身理据。  
+   - 修复弹窗关闭无响应问题（Portal + 事件处理）。  
+   - 影响文件：`src/components/FeedCard.tsx`, `src/lib/share-card.ts`, `src/app/api/feed/route.ts`
+
+6. 提示词外置  
+   - 投票 actionControl 提示词迁移到 YAML + frontmatter，便于你直接调试。  
+   - 文件：`config/vote-act-prompt.yaml`
+
+### 未完成 / 待继续
+
+1. 分享模板继续精修  
+   - 当前已按“红蓝票面”方向重绘，但仍可继续对齐目标视觉（字体、边线、间距、装饰细节）。
+
+2. 多用户实战验证  
+   - 目前环境只有 1 个真实参与者，已能验证“每题至少一票”链路；仍需多用户实测票数分布与稳定性。
+
+3. 历史数据治理  
+   - 历史低质量文案已清理并重排队过一轮；后续需持续观察是否还出现异常文案并完善规则。

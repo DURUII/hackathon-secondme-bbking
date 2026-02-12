@@ -16,7 +16,8 @@ export async function GET() {
   }
 
   type UserInfo = {
-    id: string;
+    id?: string;
+    userId?: string;
     name?: string;
     nickname?: string;
     avatar?: string;
@@ -32,21 +33,22 @@ export async function GET() {
       : undefined;
 
   // --- Auto-Sync User to Database ---
-  if (result.ok && json?.data?.id) {
+  const userInfo = json?.data;
+  const secondmeUserId = userInfo?.id ?? userInfo?.userId;
+  if (result.ok && secondmeUserId && userInfo) {
       try {
           const accessToken = await getSecondMeAccessToken();
-          const userInfo = json.data;
-          const secondmeUserId = String(userInfo.id);
+          const normalizedSecondmeUserId = String(secondmeUserId);
           
           if (accessToken) {
               await db.user.upsert({
-                  where: { secondmeUserId },
+                  where: { secondmeUserId: normalizedSecondmeUserId },
                   update: {
                       accessToken: accessToken,
                       tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Refresh expiry
                   },
                   create: {
-                      secondmeUserId,
+                      secondmeUserId: normalizedSecondmeUserId,
                       accessToken: accessToken,
                       refreshToken: "", // We don't have refresh token here, but that's fine
                       tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -55,7 +57,7 @@ export async function GET() {
               
               // Also sync Participant
               await db.participant.upsert({
-                  where: { secondmeId: secondmeUserId },
+                  where: { secondmeId: normalizedSecondmeUserId },
                   update: {
                       lastActiveAt: new Date(),
                       name: userInfo.name || userInfo.nickname || '用户',
@@ -63,14 +65,14 @@ export async function GET() {
                       isActive: true
                   },
                   create: {
-                      secondmeId: secondmeUserId,
+                      secondmeId: normalizedSecondmeUserId,
                       name: userInfo.name || userInfo.nickname || '用户',
                       avatarUrl: userInfo.avatar || userInfo.avatarUrl,
                       isActive: true
                   }
               });
               
-              console.log(`${logPrefix} SYNC`, { success: true, secondmeUserId });
+              console.log(`${logPrefix} SYNC`, { success: true, secondmeUserId: normalizedSecondmeUserId });
           }
       } catch (e) {
           console.error(`${logPrefix} SYNC_ERROR`, e);

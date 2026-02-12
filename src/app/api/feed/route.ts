@@ -86,6 +86,7 @@ export async function GET() {
       const redVotes = q.votes.filter(v => v.position === 1).length;
       const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5; // Default 0.5 if no votes
       const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0.5;
+      const blueVotes = totalVotes - redVotes;
 
       // Get comments
       const redComments = q.votes.filter(v => v.position === 1).map(v => v.comment);
@@ -107,34 +108,6 @@ export async function GET() {
           side: v.position === 1 ? 'red' as const : 'blue' as const
         };
       });
-
-      // Format Debate Turns
-      const debateTurns = q.debateTurns.map(turn => ({
-        speakerId: turn.speakerId,
-        role: "辩手", // Simplified, or fetch role from DebateRole table if needed
-        content: turn.content,
-        type: turn.type
-      }));
-      
-      // Need to map role from DebateRole? 
-      // For MVP, we can assume roles are "PRO_X" or "CON_X" stored in debateTurns? 
-      // Wait, debateTurns doesn't store role string, it links to Question and Speaker.
-      // We need to fetch DebateRole to know the role string (PRO_1 etc).
-      // Let's do a quick lookup or just rely on speaker name.
-      
-      // Better: fetch debateRoles too.
-      const roles = await db.debateRole.findMany({ where: { questionId: q.id } });
-      const roleMap = new Map(roles.map(r => [r.participantId, r.role]));
-      
-      const formattedTurns = q.debateTurns.map(turn => ({
-        speakerId: turn.speakerId,
-        role: roleMap.get(turn.speakerId) || 'UNKNOWN',
-        content: turn.content,
-        type: turn.type
-      }));
-
-      // Determine if this is a seed question (null user_id) or user question
-      const isSeedQuestion = !q.userId;
 
       // Get the actual user who created this question
       let creatorName = "社区精选";
@@ -171,10 +144,12 @@ export async function GET() {
         content: q.content,
         arenaType: q.arenaType,
         status: q.status,
+        redVotes,
+        blueVotes,
         redRatio,
         blueRatio,
-        commentCount: totalVotes + formattedTurns.length, // Votes + Turns
-        debateTurns: formattedTurns,
+        commentCount: totalVotes,
+        debateTurns: [],
         previewComments,
         fullComments: {
           red: redComments,
@@ -200,4 +175,3 @@ export async function GET() {
     );
   }
 }
-

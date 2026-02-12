@@ -1,11 +1,15 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { MessageCircle, Share2, Flame, HeartHandshake, Brain } from "lucide-react";
+import { generateShareCardBlob } from "@/lib/share-card";
 
 interface FeedCardProps {
   id: string;
   avatarUrl?: string;
   username: string;
+  currentUserName?: string;
   timeAgo: string;
   content: string;
   arenaType: "toxic" | "comfort" | "rational";
@@ -31,6 +35,7 @@ export function FeedCard({
   id,
   avatarUrl,
   username,
+  currentUserName,
   timeAgo,
   content,
   arenaType,
@@ -42,6 +47,70 @@ export function FeedCard({
 }: FeedCardProps) {
   const ArenaIcon = ARENA_ICONS[arenaType]?.icon || Flame;
   const arenaColor = ARENA_ICONS[arenaType]?.color || "text-rose-600";
+  const [isSharing, setIsSharing] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState<string>("");
+  const [mounted, setMounted] = useState(false);
+
+  const arenaLabel = arenaType === "toxic" ? "毒舌场" : arenaType === "comfort" ? "安慰场" : "理性场";
+  const myComment =
+    previewComments.find((c) => currentUserName && c.name === currentUserName)?.content ||
+    previewComments[0]?.content ||
+    "";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  const handleShare = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isSharing) return;
+    setIsSharing(true);
+    try {
+      const totalVotes = Math.max(0, commentCount);
+      const redVotes = Math.round(totalVotes * redRatio);
+      const blueVotes = Math.max(0, totalVotes - redVotes);
+      const blob = await generateShareCardBlob({
+        id,
+        question: content,
+        redVotes,
+        blueVotes,
+        myComment,
+      });
+      const url = URL.createObjectURL(blob);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(url);
+      setPreviewName(`帮我评评理-${id.slice(0, 8)}.png`);
+    } catch (error) {
+      console.error("[Share] failed", error);
+      alert("分享图生成失败，请稍后重试");
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!previewUrl) return;
+    const a = document.createElement("a");
+    a.href = previewUrl;
+    a.download = previewName || `帮我评评理-${id.slice(0, 8)}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const closePreview = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+  };
 
   return (
     <div 
@@ -115,24 +184,56 @@ export function FeedCard({
         <div className="flex items-center gap-4">
           <button className="flex items-center gap-1.5 hover:text-stone-900 transition-colors">
             <MessageCircle className="w-4 h-4" />
-            <span className="text-xs">{commentCount} 判决</span>
+            <span className="text-xs">{commentCount} 票</span>
           </button>
           <button 
             className="flex items-center gap-1.5 hover:text-stone-900 transition-colors"
-            onClick={(e) => {
-                e.stopPropagation();
-                // TODO: Share logic
-                alert('分享功能开发中');
-            }}
+            onClick={handleShare}
           >
             <Share2 className="w-4 h-4" />
-            <span className="text-xs">分享</span>
+            <span className="text-xs">{isSharing ? "生成中..." : "分享"}</span>
           </button>
         </div>
         {commentCount === 0 && (
            <span className="text-xs text-stone-300">1 人关注</span> 
         )}
       </div>
+
+      {mounted && previewUrl && createPortal(
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            closePreview();
+          }}
+        >
+          <div
+            className="w-full max-w-[560px] rounded-2xl bg-white p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={previewUrl}
+              alt="分享预览"
+              className="w-full aspect-square rounded-xl border border-stone-200 object-cover"
+            />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded-lg border border-stone-300 text-stone-700 hover:bg-stone-50"
+                onClick={(e) => closePreview(e)}
+              >
+                关闭
+              </button>
+              <button
+                className="px-4 py-2 rounded-lg bg-stone-900 text-white hover:bg-stone-800"
+                onClick={handleDownload}
+              >
+                下载图片
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

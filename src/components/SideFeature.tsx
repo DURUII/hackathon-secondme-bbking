@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { QuestionInput } from "@/components/QuestionInput";
 import { FeedCard } from "@/components/FeedCard";
 import { ArenaDisplay } from "@/components/ArenaDisplay";
@@ -21,6 +21,8 @@ interface FeedItem {
   content: string;
   arenaType: "toxic" | "comfort" | "rational";
   status: "pending" | "collected";
+  redVotes: number;
+  blueVotes: number;
   redRatio: number;
   blueRatio: number;
   commentCount: number;
@@ -48,6 +50,7 @@ export default function PilFeature() {
   const [isPolling, setIsPolling] = useState(false);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
   const [stats, setStats] = useState({ totalParticipants: 0, totalQuestions: 0 });
+  const publishInFlightRef = useRef(false);
 
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
@@ -139,6 +142,10 @@ export default function PilFeature() {
   // Initial Fetch moved to up too
 
   const handlePublish = async (data: { content: string; arenaType: string }) => {
+    if (publishInFlightRef.current) {
+      return;
+    }
+    publishInFlightRef.current = true;
     setIsPolling(true);
     
     // 1. Optimistic Add to Feed
@@ -152,6 +159,8 @@ export default function PilFeature() {
       content: data.content,
       arenaType: data.arenaType as any,
       status: "pending",
+      redVotes: 0,
+      blueVotes: 0,
       redRatio: 0.5,
       blueRatio: 0.5,
       commentCount: 0,
@@ -160,7 +169,7 @@ export default function PilFeature() {
       debateTurns: [],
     };
 
-    setFeedItems([newItem, ...feedItems]);
+    setFeedItems((prev) => [newItem, ...prev]);
     setExpandedId(newItem.id); // Auto expand to show progress
 
     try {
@@ -188,12 +197,20 @@ export default function PilFeature() {
         
         // Trigger immediate fetch to sync state
         fetchFeed();
+      } else {
+        // Rollback optimistic item when backend rejects request.
+        setFeedItems((prev) => prev.filter((item) => item.id !== newItem.id));
+        setExpandedId((prev) => (prev === newItem.id ? null : prev));
+        alert(publishData.error || "发布失败，请重试");
       }
     } catch (error) {
       console.error("Publish flow failed", error);
+      setFeedItems((prev) => prev.filter((item) => item.id !== newItem.id));
+      setExpandedId((prev) => (prev === newItem.id ? null : prev));
       alert("发布失败，请重试");
     } finally {
       setIsPolling(false);
+      publishInFlightRef.current = false;
     }
   };
 
@@ -275,10 +292,8 @@ export default function PilFeature() {
                         status={item.status}
                         redRatio={item.redRatio}
                         blueRatio={item.blueRatio}
-                        debateTurns={item.debateTurns}
                         topRedComments={item.fullComments.red}
                         topBlueComments={item.fullComments.blue}
-                        onViewResult={() => setExpandedId(null)} // Collapse on click
                       />
                       <button 
                         onClick={() => setExpandedId(null)}
@@ -292,6 +307,7 @@ export default function PilFeature() {
                     <FeedCard
                       {...item}
                       username={item.userInfo.name}
+                      currentUserName={userInfo?.name}
                       avatarUrl={item.userInfo.avatarUrl}
                       onClick={() => handleOpenItem(item.id)}
                     />

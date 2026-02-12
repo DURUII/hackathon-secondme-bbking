@@ -63,10 +63,20 @@ export async function getUserFromToken(): Promise<TokenUser | null> {
       return null;
     }
 
-    const json = await readJsonOrText(result.resp) as { data?: { id: string; name?: string; nickname?: string; avatar?: string; avatarUrl?: string } } | undefined;
+    const json = await readJsonOrText(result.resp) as {
+      data?: {
+        id?: string;
+        userId?: string;
+        name?: string;
+        nickname?: string;
+        avatar?: string;
+        avatarUrl?: string;
+      };
+    } | undefined;
     const userInfo = json?.data;
+    const secondmeUserId = userInfo?.id ?? userInfo?.userId;
     
-    if (!userInfo || !userInfo.id) {
+    if (!userInfo || !secondmeUserId) {
        console.warn('[AuthHelper] Invalid user info structure', json);
 
        // Try DB recovery if API returns invalid data (rare)
@@ -88,19 +98,19 @@ export async function getUserFromToken(): Promise<TokenUser | null> {
        return null;
     }
 
-    const secondmeUserId = String(userInfo.id);
+    const normalizedSecondmeUserId = String(secondmeUserId);
     const name = userInfo.name || userInfo.nickname || '用户';
     const avatarUrl = userInfo.avatar || userInfo.avatarUrl;
 
     // 2. Upsert User in Database
     const user = await db.user.upsert({
-        where: { secondmeUserId },
+        where: { secondmeUserId: normalizedSecondmeUserId },
         update: {
             accessToken: token.value,
             tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
         create: {
-            secondmeUserId,
+            secondmeUserId: normalizedSecondmeUserId,
             accessToken: token.value,
             refreshToken: cookieStore.get('secondme_refresh_token')?.value || '',
             tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),

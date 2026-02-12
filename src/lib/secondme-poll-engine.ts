@@ -2,6 +2,8 @@
  * SecondMe Poll Engine
  * Handles calling SecondMe API to collect votes from participants
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 export interface VoteResult {
   position: number; // 1 = red, -1 = blue
@@ -55,19 +57,18 @@ export class SecondMePollEngine {
    */
   static async callSecondMeForVote(request: PollRequest): Promise<VoteResult> {
     const SECONDME_API_BASE_URL = process.env.SECONDME_API_BASE_URL ?? 'https://app.mindos.com/gate/lab';
-
-    const prompt = this.buildVotePrompt(request.question, request.arenaType);
+    const actionControl = this.buildVoteActionControl(request.arenaType);
 
     try {
-      const response = await fetch(`${SECONDME_API_BASE_URL}/api/secondme/chat/stream`, {
+      const response = await fetch(`${SECONDME_API_BASE_URL}/api/secondme/act/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${request.participantToken}`,
         },
         body: JSON.stringify({
-          message: prompt,
-          stream: false, // Get full response for voting
+          message: request.question,
+          actionControl,
         }),
       });
 
@@ -75,8 +76,63 @@ export class SecondMePollEngine {
         throw new Error(`SecondMe API error: ${response.status}`);
       }
 
-      const data = await response.json();
-      return this.parseVoteResponse(data);
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        return this.parseVoteResponse(data);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('SecondMe API stream missing body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffered = '';
+      let aggregate = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffered += decoder.decode(value, { stream: !done });
+        const lines = buffered.split(/\r?\n/);
+        buffered = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line || line.startsWith('event:')) {
+            continue;
+          }
+          if (!line.startsWith('data:')) {
+            continue;
+          }
+
+          const dataStr = line.slice(5).trim();
+          if (dataStr === '[DONE]') {
+            continue;
+          }
+
+          try {
+            const payload = JSON.parse(dataStr);
+            const chunk =
+              payload?.choices?.[0]?.delta?.content ??
+              payload?.choices?.[0]?.message?.content ??
+              payload?.data?.content ??
+              payload?.content;
+            if (typeof chunk === 'string' && chunk.length > 0) {
+              aggregate += chunk;
+            }
+          } catch {
+            // Some SSE providers stream plain text in `data:` lines.
+            if (dataStr && !dataStr.startsWith('{')) {
+              aggregate += dataStr;
+            }
+          }
+        }
+
+        if (done) break;
+      }
+
+      return this.parseVoteResponse({ content: aggregate });
     } catch (error) {
       console.error('[SecondMePollEngine] API call failed:', error);
       throw error;
@@ -84,64 +140,73 @@ export class SecondMePollEngine {
   }
 
   /**
-   * Build a prompt for voting
+   * Build actionControl for structured vote output.
    */
-  private static buildVotePrompt(question: string, arenaType: string): string {
-    const arenaInstructions = {
-      toxic: '请用毒舌、直接的方式评价，给出尖锐的建议。',
-      comfort: '请用温暖、理解的方式评价，给出安慰和建议。',
-      rational: '请用理性、客观的方式评价，给出分析。',
-    };
-
-    return `
-请对以下社交场景进行投票和评论：
-
-场景：${question}
-
-要求：
-1. 请在 1-10 秒内做出判断并给出一句话评论
-2. ${arenaInstructions[arenaType as keyof typeof arenaInstructions] || arenaInstructions.toxic}
-3. 你的回复格式必须是 JSON：
-   {"position": 1, "comment": "你的评论"}
-
-其中 position 为 1 表示"红方"(支持/激进)，-1 表示"蓝方"(反对/保守)
-
-请直接返回 JSON，不要有其他内容。
-`.trim();
+  private static buildVoteActionControl(arenaType: string): string {
+    const cfg = this.getVotePromptConfig();
+    const arenaStyle = cfg.arenaStyles[arenaType] ?? cfg.arenaStyles.toxic ?? "";
+    return cfg.template
+      .replaceAll("{{schema}}", cfg.schema)
+      .replaceAll("{{arena_style}}", arenaStyle)
+      .replaceAll("{{banned_phrases}}", cfg.bannedPhrases.join("、"))
+      .replaceAll("{{example_output}}", cfg.exampleOutput)
+      .trim();
   }
 
   /**
    * Parse the vote response from SecondMe
    */
   private static parseVoteResponse(data: any): VoteResult {
-    try {
-      // Try to parse from the response
-      const content = data?.resp?.content || data?.content || data?.message || JSON.stringify(data);
+    const content = data?.resp?.content || data?.content || data?.message || '';
+    const text = String(content).trim();
+    if (!text) {
+      throw new Error('SecondMe vote response is empty');
+    }
 
-      // Extract JSON from response
-      const jsonMatch = content.match(/\{[^}]+\}/);
-      if (jsonMatch) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
         const parsed = JSON.parse(jsonMatch[0]);
-        if (typeof parsed.position === 'number' && typeof parsed.comment === 'string') {
-          // Normalize position
-          const position = parsed.position > 0 ? 1 : -1;
-          return {
-            position,
-            comment: parsed.comment,
-          };
+        const comment =
+          typeof parsed.comment === 'string'
+            ? parsed.comment.trim()
+            : typeof parsed.content === 'string'
+            ? parsed.content.trim()
+            : '';
+        if (comment) {
+          this.assertCommentQuality(comment);
+          const position = typeof parsed.position === 'number'
+            ? (parsed.position > 0 ? 1 : -1)
+            : this.inferPositionFromText(comment);
+          return { position, comment: comment.slice(0, 220) };
         }
+      } catch {
+        // Continue to plain-text fallback.
       }
+    }
 
-      // Fallback: default to red with a generic comment
-      return {
-        position: 1,
-        comment: '我支持这个观点',
-      };
-    } catch {
-      return {
-        position: 1,
-        comment: '我支持这个观点',
-      };
+    throw new Error(`SecondMe vote response is not valid JSON: ${text.slice(0, 220)}`);
+  }
+
+  private static inferPositionFromText(text: string): number {
+    const negativeHints = ['不应该', '不要', '不建议', '反对', '算了', '别'];
+    return negativeHints.some((hint) => text.includes(hint)) ? -1 : 1;
+  }
+
+  private static assertCommentQuality(comment: string) {
+    const normalized = comment.replace(/\s+/g, '');
+    if (normalized.length < 12) {
+      throw new Error(`SecondMe vote comment too short: ${comment}`);
+    }
+    const bannedPhrases = [
+      '我支持这个观点',
+      '值得深思',
+      '看情况',
+      '都可以',
+      '不好说',
+    ];
+    if (bannedPhrases.some((phrase) => normalized.includes(phrase))) {
+      throw new Error(`SecondMe vote comment too generic: ${comment}`);
     }
   }
 
@@ -178,5 +243,102 @@ export class SecondMePollEngine {
     }
 
     return null;
+  }
+
+  private static getVotePromptConfig() {
+    const fallback: {
+      schema: string;
+      bannedPhrases: string[];
+      arenaStyles: Record<string, string>;
+      exampleOutput: string;
+      template: string;
+    } = {
+      schema: '{"position": 1|-1, "comment": "具体理由"}',
+      bannedPhrases: ['我支持这个观点', '值得深思', '看情况', '都可以', '不好说'],
+      arenaStyles: {
+        toxic: '评论风格偏毒舌直接，允许尖锐但不能辱骂。',
+        comfort: '评论风格偏温暖安慰，突出理解与支持。',
+        rational: '评论风格偏理性客观，突出利弊分析。',
+      },
+      exampleOutput:
+        '{"position":-1,"comment":"对方突然冷淡说明投入不稳定，你此时突然升温会失去议价空间，先观察并降低投入更稳妥。"}',
+      template:
+        '仅输出合法 JSON 对象。输出结构：{{schema}}。风格要求：{{arena_style}}。禁止输出：{{banned_phrases}}。示例：{{example_output}}',
+    };
+
+    try {
+      const file = readFileSync(path.join(process.cwd(), "config/vote-act-prompt.yaml"), "utf8");
+      const parts = file.split("---");
+      if (parts.length < 3) {
+        return fallback;
+      }
+
+      const frontmatter = parts[1];
+      const template = parts.slice(2).join("---").trim();
+      const kv: Record<string, string> = {};
+
+      for (const rawLine of frontmatter.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const idx = line.indexOf(":");
+        if (idx < 0) continue;
+        const key = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim();
+        kv[key] = value;
+      }
+
+      const schema = this.parseYamlScalar(kv.schema) || fallback.schema;
+      const exampleOutput = this.parseYamlScalar(kv.example_output) || fallback.exampleOutput;
+      const bannedPhrases = this.parseYamlJsonArray(kv.banned_phrases) || fallback.bannedPhrases;
+      const arenaStyles = this.parseYamlJsonObject(kv.arena_styles) || fallback.arenaStyles;
+
+      return {
+        schema,
+        bannedPhrases,
+        arenaStyles,
+        exampleOutput,
+        template: template || fallback.template,
+      };
+    } catch (error) {
+      console.warn("[SecondMePollEngine] Failed to load vote prompt yaml, using fallback:", error);
+      return fallback;
+    }
+  }
+
+  private static parseYamlScalar(raw?: string): string | null {
+    if (!raw) return null;
+    const val = raw.trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      return val.slice(1, -1);
+    }
+    return val || null;
+  }
+
+  private static parseYamlJsonArray(raw?: string): string[] | null {
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map((v) => String(v)) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private static parseYamlJsonObject(raw?: string): Record<string, string> | null {
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+      const result: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        result[k] = String(v);
+      }
+      return result;
+    } catch {
+      return null;
+    }
   }
 }
