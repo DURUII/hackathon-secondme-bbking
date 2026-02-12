@@ -78,7 +78,7 @@ export default function PilFeature() {
       if (document.visibilityState === 'visible') {
         fetch('/api/cron/heartbeat', { method: 'POST' }).catch(e => console.error('Heartbeat failed', e));
       }
-    }, 5000); // Trigger every 5s
+    }, 30000); // Trigger every 30s to avoid overloading DB on free tiers
     return () => clearInterval(interval);
   }, []);
 
@@ -88,7 +88,7 @@ export default function PilFeature() {
       if (document.visibilityState === 'visible') {
         fetchFeed();
       }
-    }, 3000); // Poll feed every 3s
+    }, 10000); // Poll feed every 10s to reduce connection pressure
     return () => clearInterval(interval);
   }, [fetchFeed]);
 
