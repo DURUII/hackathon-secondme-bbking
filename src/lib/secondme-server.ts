@@ -5,23 +5,7 @@ export function getSecondMeApiBaseUrl() {
 }
 
 export function getRedirectUri(): string {
-  // Always prefer explicit configuration. This avoids Preview-domain mismatches.
-  if (process.env.SECONDME_REDIRECT_URI) {
-    return process.env.SECONDME_REDIRECT_URI;
-  }
-
-  if (process.env.VERCEL) {
-    // On Vercel fallback to production domain first, then deployment domain.
-    const host =
-      process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-      process.env.VERCEL_URL ||
-      process.env.NEXT_PUBLIC_VERCEL_URL;
-    if (host) {
-      return `https://${host}/api/auth/callback`;
-    }
-  }
-  // Local development fallback
-  return "http://localhost:3000/api/auth/callback";
+  return process.env.SECONDME_REDIRECT_URI || "";
 }
 
 export async function getSecondMeAccessToken() {
