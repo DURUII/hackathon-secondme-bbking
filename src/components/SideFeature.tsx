@@ -80,16 +80,34 @@ export default function PilFeature() {
   const fetchFeed = useCallback(async () => {
     try {
       const res = await fetch("/api/feed");
-      const data = await res.json();
-      if (data.success) {
-        setFeedItems(data.data);
+      const raw = await res.text();
+      let data: any = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        console.error("[FEED HTTP ERROR]", {
+          status: res.status,
+          statusText: res.statusText,
+          body: raw.slice(0, 300),
+        });
+        return;
+      }
+
+      if (data?.success) {
+        setFeedItems(Array.isArray(data.data) ? data.data : []);
         if (data.stats) {
           setStats(data.stats);
         }
       } else {
-        // Show error to user
-        setFeedItems([]);
-        console.error('[FEED ERROR]', data);
+        console.error("[FEED ERROR]", {
+          status: res.status,
+          payload: data,
+          raw: raw.slice(0, 300),
+        });
       }
     } catch (error) {
       console.error("Failed to fetch feed", error);
@@ -334,11 +352,14 @@ export default function PilFeature() {
       <header className="sticky top-0 z-10 bg-stone-50/90 backdrop-blur-md border-b border-stone-100 px-4 py-3">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-             {/* <Flame className="w-6 h-6 text-stone-900" /> */} 
-             {/* Using simple text logo for cleaner look as per design */}
-             <h1 className="text-xl font-black tracking-tight text-stone-900">
-               评理
-             </h1>
+             <div className="relative">
+               <h1 className="text-xl font-black tracking-tighter text-stone-900">
+                 BB King
+               </h1>
+               <span className="absolute -top-2 -right-8 scale-75 origin-bottom-left text-[10px] font-bold text-white bg-stone-900 px-1.5 py-0.5 rounded-tr-md rounded-bl-md">
+                 AI版
+               </span>
+             </div>
           </div>
           <div className="w-8 h-8 rounded-full bg-stone-200 overflow-hidden">
             {userInfo?.avatarUrl ? (
