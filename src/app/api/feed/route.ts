@@ -68,7 +68,15 @@ export async function GET() {
         where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
         include: {
-          votes: true
+          votes: {
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              participantId: true,
+              position: true,
+              comment: true,
+            },
+          },
         },
         take: 20, 
       }),
@@ -76,8 +84,45 @@ export async function GET() {
       db.question.count({ where: { deletedAt: null } })
     ]);
 
-    // 2. Transform to Feed format
-    const feedItems = await Promise.all(questions.map(async (q) => {
+    // 2. Prefetch related entities in batch to avoid N+1 query latency.
+    const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
+    const voteParticipantIds = Array.from(
+      new Set(
+        questions
+          .flatMap((q) => q.votes.map((v) => v.participantId))
+          .filter(Boolean) as string[]
+      )
+    );
+
+    const [voteParticipants, creators] = await Promise.all([
+      voteParticipantIds.length
+        ? db.participant.findMany({
+            where: { id: { in: voteParticipantIds } },
+            select: { id: true, name: true, avatarUrl: true, interests: true },
+          })
+        : Promise.resolve([]),
+      creatorUserIds.length
+        ? db.user.findMany({
+            where: { id: { in: creatorUserIds } },
+            select: { id: true, secondmeUserId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const creatorSecondMeIds = Array.from(new Set(creators.map((u) => u.secondmeUserId)));
+    const creatorParticipants = creatorSecondMeIds.length
+      ? await db.participant.findMany({
+          where: { secondmeId: { in: creatorSecondMeIds } },
+          select: { secondmeId: true, name: true, avatarUrl: true, id: true },
+        })
+      : [];
+
+    const participantById = new Map(voteParticipants.map((p) => [p.id, p]));
+    const creatorByUserId = new Map(creators.map((u) => [u.id, u]));
+    const creatorParticipantBySecondmeId = new Map(creatorParticipants.map((p) => [p.secondmeId, p]));
+
+    // 3. Transform to Feed format
+    const feedItems = questions.map((q) => {
       // Calculate ratios
       const totalVotes = q.votes.length;
       const redVotes = q.votes.filter(v => v.position === 1).length;
@@ -91,14 +136,8 @@ export async function GET() {
 
       // Get preview comments
       // ... (Existing logic or simplified)
-      const participantIds = Array.from(new Set(q.votes.map(v => v.participantId).filter(Boolean) as string[]));
-      const participants = await db.participant.findMany({
-        where: { id: { in: participantIds } }
-      });
-      const participantMap = new Map(participants.map(p => [p.id, p]));
-
       const previewComments = q.votes.slice(0, 2).map(v => {
-        const p = v.participantId ? participantMap.get(v.participantId) : null;
+        const p = v.participantId ? participantById.get(v.participantId) : null;
         return {
           id: v.id,
           name: p?.name || '匿名分身',
@@ -111,7 +150,7 @@ export async function GET() {
 
       // Get all comments structured
       const structuredComments = q.votes.map(v => {
-        const p = v.participantId ? participantMap.get(v.participantId) : null;
+        const p = v.participantId ? participantById.get(v.participantId) : null;
         return {
           id: v.id,
           name: p?.name || '匿名分身',
@@ -127,14 +166,9 @@ export async function GET() {
       let creatorAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
 
       if (q.userId) {
-        // User question - get real user info
-        const user = await db.user.findUnique({
-          where: { id: q.userId }
-        });
-        if (user && user.secondmeUserId) {
-          const participant = await db.participant.findUnique({
-            where: { secondmeId: user.secondmeUserId }
-          });
+        const user = creatorByUserId.get(q.userId);
+        if (user?.secondmeUserId) {
+          const participant = creatorParticipantBySecondmeId.get(user.secondmeUserId);
           if (participant) {
             creatorName = participant.name;
             creatorAvatar = participant.avatarUrl || `https://api.dicebear.com/7.x/notionists/svg?seed=${participant.id}`;
@@ -171,7 +205,7 @@ export async function GET() {
           blue: blueComments
         }
       };
-    }));
+    });
 
     return NextResponse.json({
       success: true,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { QuestionInput } from "@/components/QuestionInput";
 import { FeedCard } from "@/components/FeedCard";
 import { ArenaDisplay } from "@/components/ArenaDisplay";
@@ -54,6 +54,118 @@ interface FeedItem {
 
 type FeedTab = "all" | "proposed" | "subscribed";
 
+type WaitingQuote = {
+  speaker: string;
+  viewpoint: string;
+  quote: string;
+};
+
+const FALLBACK_WAITING_QUOTES: WaitingQuote[] = [
+  { speaker: "席瑞", viewpoint: "分手应不应该当面说", quote: "分手当面说，不是为了体面，是为了我想见你最后一面。" },
+  { speaker: "陈铭", viewpoint: "坚持有没有意义", quote: "世上没有事有意义，坚持本身就是闪亮的意义。" },
+  { speaker: "马薇薇", viewpoint: "在职场中要不要做老好人", quote: "没有霹雳手段，怎怀菩萨心肠。" },
+  { speaker: "黄执中", viewpoint: "如何看待原则", quote: "人值不值钱，看他的原则值不值钱。" },
+];
+
+function hashString(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+const THEME_KEYWORDS: Array<{ theme: string; keywords: string[] }> = [
+  { theme: "爱情与婚姻类", keywords: ["爱情", "恋", "分手", "前任", "婚", "离婚", "复合", "伴侣", "异地", "挚爱"] },
+  { theme: "亲情与家庭类", keywords: ["父母", "孩子", "家庭", "家长", "妈妈", "爸爸", "二胎", "养老", "老大", "老师"] },
+  { theme: "职场与社交类", keywords: ["职场", "老板", "同事", "加班", "老好人", "社交", "真诚", "占便宜", "精致穷"] },
+  { theme: "学习与教育类", keywords: ["高考", "学习", "教育", "分数", "时间价值"] },
+  { theme: "成长与人生类", keywords: ["成长", "人生", "坚持", "自卑", "阴影", "善良", "普通人", "废物"] },
+  { theme: "社会与价值类", keywords: ["误解", "歧视", "微光", "原则", "价值", "生活", "忙忙碌碌"] },
+];
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      cells.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur.trim());
+  return cells.map((v) => v.replace(/^"(.*)"$/, "$1").trim());
+}
+
+function parseWaitingQuotesCsv(raw: string): WaitingQuote[] {
+  const out: WaitingQuote[] = [];
+  const lines = raw.split(/\r?\n/);
+  let start = 0;
+
+  if (lines.length > 0) {
+    const maybeHeader = lines[0].replace(/^\uFEFF/, "").trim();
+    if (maybeHeader.startsWith("人名,观点,金句")) {
+      start = 1;
+    }
+  }
+
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const [speaker, viewpoint, quote] = parseCsvLine(line);
+    if (!speaker || !viewpoint || !quote) {
+      continue;
+    }
+    out.push({ speaker, viewpoint, quote });
+  }
+
+  return out;
+}
+
+function detectThemeForTopic(topic: string): string {
+  const normalized = topic.replace(/\s+/g, "");
+  let bestTheme = "社会与价值类";
+  let bestScore = 0;
+
+  for (const entry of THEME_KEYWORDS) {
+    let score = 0;
+    for (const kw of entry.keywords) {
+      if (normalized.includes(kw)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestTheme = entry.theme;
+    }
+  }
+
+  return bestTheme;
+}
+
+function getQuotesByTheme(bank: WaitingQuote[], theme: string): WaitingQuote[] {
+  const themed = bank.filter((q) => detectThemeForTopic(q.viewpoint) === theme);
+  if (themed.length > 0) return themed;
+  if (bank.length > 0) return bank;
+  return FALLBACK_WAITING_QUOTES;
+}
+
+function formatQuoteForDisplay(quote: string): string {
+  return quote.replace(/。/g, "。\n").replace(/\n+$/g, "");
+}
+
 export default function PilFeature() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -63,13 +175,58 @@ export default function PilFeature() {
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
   const [stats, setStats] = useState({ totalParticipants: 0, totalQuestions: 0 });
   const [activeTab, setActiveTab] = useState<FeedTab>("all");
+  const [quoteBank, setQuoteBank] = useState<WaitingQuote[]>(FALLBACK_WAITING_QUOTES);
+  const [sessionLoading, setSessionLoading] = useState<{
+    topic: string;
+    theme: string;
+    quoteIndex: number;
+    startedAt: number;
+  } | null>(null);
   const publishInFlightRef = useRef(false);
 
-  const userName = userInfo?.name;
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch("/qipa-waiting-quotes.csv", { cache: "force-cache" });
+        if (!res.ok) return;
+        const raw = await res.text();
+        const parsed = parseWaitingQuotesCsv(raw);
+        if (mounted && parsed.length > 0) {
+          setQuoteBank(parsed);
+        }
+      } catch {
+        // keep fallback quotes
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const currentWaitingQuote = useMemo(() => {
+    if (!sessionLoading) return null;
+    const themed = getQuotesByTheme(quoteBank, sessionLoading.theme);
+    if (themed.length === 0) return null;
+    return themed[sessionLoading.quoteIndex % themed.length];
+  }, [quoteBank, sessionLoading]);
 
   const startDebateSession = useCallback(
-    async (questionId: string, openingPosition: "PRO" | "CON") => {
+    async (questionId: string, openingPosition: "PRO" | "CON", topic: string) => {
       try {
+        const seed = hashString(`${questionId}:${openingPosition}:${Date.now()}`);
+        const normalizedTopic = topic.trim() || "新的辩题";
+        const theme = detectThemeForTopic(normalizedTopic);
+        const themedQuotes = getQuotesByTheme(quoteBank, theme);
+        const initialQuoteIndex = seed % Math.max(1, themedQuotes.length);
+        setSessionLoading({
+          topic: normalizedTopic,
+          theme,
+          quoteIndex: initialQuoteIndex,
+          startedAt: Date.now(),
+        });
+
         const resolveExistingSessionId = async (): Promise<string | null> => {
           if (!currentUserId) return null;
           const listRes = await fetch(`/api/question/${questionId}/sessions`, { method: "GET" });
@@ -93,6 +250,7 @@ export default function PilFeature() {
         // 1) Create or reuse session for this question+initiator.
         const createRes = await fetch(`/api/question/${questionId}/session`, { method: "POST" });
         if (createRes.status === 401) {
+          setSessionLoading(null);
           window.location.href = "/api/auth/login";
           return;
         }
@@ -110,6 +268,7 @@ export default function PilFeature() {
             window.location.href = `/session/${fallbackSessionId}?open=${openingPosition}`;
             return;
           }
+          setSessionLoading(null);
           const msg =
             (createData as { error?: string } | null)?.error || `Failed to create session (HTTP ${createRes.status})`;
           alert(msg);
@@ -121,6 +280,7 @@ export default function PilFeature() {
           (await resolveExistingSessionId()) ??
           undefined;
         if (!sessionId) {
+          setSessionLoading(null);
           alert("Session created but missing id");
           return;
         }
@@ -128,19 +288,35 @@ export default function PilFeature() {
         // Don't block navigation on vote/opening I/O; set it on the session page in background.
         window.location.href = `/session/${sessionId}?open=${openingPosition}`;
       } catch (err) {
+        setSessionLoading(null);
         console.error("[START_DEBATE_SESSION] failed:", err);
         alert("启动辩论失败，请重试");
       }
     },
-    [currentUserId]
+    [currentUserId, quoteBank]
   );
+
+  useEffect(() => {
+    if (!sessionLoading) return;
+    const timer = window.setInterval(() => {
+      setSessionLoading((prev) =>
+        prev
+          ? {
+              ...prev,
+              quoteIndex: (prev.quoteIndex + 1) % Math.max(1, getQuotesByTheme(quoteBank, prev.theme).length),
+            }
+          : null
+      );
+    }, 2600);
+    return () => window.clearInterval(timer);
+  }, [quoteBank, sessionLoading]);
 
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
     try {
       const res = await fetch("/api/feed");
       const raw = await res.text();
-      let data: any = null;
+      let data: unknown = null;
       try {
         data = raw ? JSON.parse(raw) : null;
       } catch {
@@ -156,15 +332,20 @@ export default function PilFeature() {
         return;
       }
 
-      if (data?.success) {
-        setFeedItems(Array.isArray(data.data) ? data.data : []);
-        if (data.stats) {
-          setStats(data.stats);
+      const payload =
+        data && typeof data === "object"
+          ? (data as { success?: boolean; data?: FeedItem[]; stats?: { totalParticipants: number; totalQuestions: number } })
+          : null;
+
+      if (payload?.success) {
+        setFeedItems(Array.isArray(payload.data) ? payload.data : []);
+        if (payload.stats) {
+          setStats(payload.stats);
         }
       } else {
         console.error("[FEED ERROR]", {
           status: res.status,
-          payload: data,
+          payload,
           raw: raw.slice(0, 300),
         });
       }
@@ -196,30 +377,41 @@ export default function PilFeature() {
   useEffect(() => {
     async function fetchUserInfo() {
       try {
-        const userRes = await fetch("/api/secondme/user/info");
-        const userData = await userRes.json();
-
-        // Unauthorized - do not redirect, just leave userInfo null
-        if (userRes.status === 401 || userData.code === 401) {
-          return;
-        }
-
-        if (userData.code === 0 && userData.data) {
-          const name = userData.data.name || userData.data.nickname || "我";
-          const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
-          setUserInfo({ name, avatarUrl });
-        }
-
-        // Register (Silent)
-        const regRes = await fetch("/api/register", { method: "POST" });
-        const regData = await regRes.json();
-
-        if (regData.success) {
-          if (typeof regData.data?.userId === "string") {
-            setCurrentUserId(regData.data.userId);
+        const parseJson = (raw: string) => {
+          try {
+            return raw ? JSON.parse(raw) : null;
+          } catch {
+            return null;
           }
-          // Trigger backfill for new/existing participant to vote on recent questions
-          fetch("/api/backfill", { method: "POST" }).catch(console.error);
+        };
+
+        const [userRet, regRet] = await Promise.allSettled([
+          fetch("/api/secondme/user/info"),
+          fetch("/api/register", { method: "POST" }),
+        ]);
+
+        if (userRet.status === "fulfilled") {
+          const userRaw = await userRet.value.text();
+          const userData = parseJson(userRaw) as
+            | { code?: number; data?: { name?: string; nickname?: string; avatar?: string; avatarUrl?: string } }
+            | null;
+          if (userRet.value.status !== 401 && userData?.code !== 401 && userData?.code === 0 && userData?.data) {
+            const name = userData.data.name || userData.data.nickname || "我";
+            const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
+            setUserInfo({ name, avatarUrl });
+          }
+        }
+
+        if (regRet.status === "fulfilled") {
+          const regRaw = await regRet.value.text();
+          const regData = parseJson(regRaw) as { success?: boolean; data?: { userId?: string } } | null;
+          if (regData?.success) {
+            if (typeof regData.data?.userId === "string") {
+              setCurrentUserId(regData.data.userId);
+            }
+            // Trigger backfill for new/existing participant to vote on recent questions.
+            fetch("/api/backfill", { method: "POST" }).catch(console.error);
+          }
         }
       } catch (error) {
         console.error("Failed to fetch user info", error);
@@ -397,8 +589,31 @@ export default function PilFeature() {
           </div>
           
           {isLoadingFeed ? (
-            <div className="flex justify-center py-10">
-              <Loader2 className="w-6 h-6 animate-spin text-white/20" />
+            <div className="space-y-6">
+              {[0, 1, 2].map((idx) => {
+                return (
+                  <div
+                    key={`feed-loading-quote-${idx}`}
+                    className="bg-[#1E1E1E] rounded-2xl shadow-lg border border-stone-800/50 overflow-hidden"
+                  >
+                    <div className="p-5">
+                      <div className="h-6 w-3/4 rounded-md bg-white/10 animate-pulse"></div>
+
+                      <div className="mt-4 h-12 w-full rounded-lg bg-white/10 animate-pulse"></div>
+
+                      <div className="mt-4 space-y-3">
+                        <div className="h-12 rounded-xl bg-white/10 animate-pulse"></div>
+                        <div className="h-12 rounded-xl bg-white/10 animate-pulse"></div>
+                      </div>
+
+                      <div className="mt-5 grid grid-cols-2 gap-3">
+                        <div className="h-11 rounded-xl bg-[#FF4D4F]/45 animate-pulse"></div>
+                        <div className="h-11 rounded-xl bg-[#1890FF]/45 animate-pulse"></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="space-y-6">
@@ -441,8 +656,8 @@ export default function PilFeature() {
                       previewComments={item.previewComments}
                       comments={item.structuredComments}
                       onClick={() => handleOpenItem(item.id)}
-                      onSupportPro={() => startDebateSession(item.id, "PRO")}
-                      onSupportCon={() => startDebateSession(item.id, "CON")}
+                      onSupportPro={() => startDebateSession(item.id, "PRO", item.content)}
+                      onSupportCon={() => startDebateSession(item.id, "CON", item.content)}
                     />
                   )}
                 </div>
@@ -464,6 +679,37 @@ export default function PilFeature() {
           )}
         </section>
       </main>
+
+      {sessionLoading ? (
+        <div className="fixed inset-0 z-[1400] bg-black/72 backdrop-blur-sm flex items-center justify-center px-6">
+          <div className="w-[min(680px,94vw)] rounded-2xl border border-white/15 bg-[#111]/90 p-6 shadow-2xl">
+            <div className="flex items-center gap-3 text-white/70 text-xs font-bold uppercase tracking-[0.22em]">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              正在入场 · 奇葩开杠中
+            </div>
+            <div className="mt-3 text-white text-lg md:text-xl font-black leading-snug">
+              辩题：{sessionLoading.topic}
+            </div>
+            <div className="mt-4 rounded-xl border border-[#FADB14]/35 bg-[#FADB14]/10 p-4">
+              <div className="text-[#FADB14] text-[11px] font-black uppercase tracking-[0.16em]">
+                今日金句 · {sessionLoading.theme.replace("类", "")}
+              </div>
+              <div className="mt-2 text-white/80 text-xs font-bold whitespace-pre-line">
+                观点：{currentWaitingQuote?.viewpoint ?? "辩论现场"}
+              </div>
+              <div className="mt-2 text-white text-base md:text-lg font-semibold leading-relaxed whitespace-pre-line">
+                “{formatQuoteForDisplay(currentWaitingQuote?.quote ?? "观点可以交锋，尊重不能下线。")}”
+              </div>
+              <div className="mt-2 text-white/70 text-xs font-bold whitespace-pre-line">
+                说这句的人：{currentWaitingQuote?.speaker ?? "匿名辩手"}
+              </div>
+            </div>
+            <div className="mt-3 text-[11px] text-white/45">
+              已等待 {Math.max(1, Math.floor((Date.now() - sessionLoading.startedAt) / 1000))}s，正在为你匹配本局辩手与席位。
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
