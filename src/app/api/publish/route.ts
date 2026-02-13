@@ -5,6 +5,7 @@ import { VoteManager } from '@/lib/vote-manager';
 import { db } from '@/lib/db';
 import { VoteTaskManager } from '@/lib/vote-task-manager';
 import { SecondMePollEngine } from '@/lib/secondme-poll-engine';
+import { QUESTION_CONTENT_MAX_LENGTH } from '@/lib/limits';
 
 const VALID_ARENA_TYPES = ['toxic', 'comfort', 'rational'];
 const QUESTION_FANOUT_LIMIT = 50;
@@ -23,11 +24,19 @@ export async function POST(request: Request) {
     // Parse request body
     const body = await request.json();
     const { content, arenaType = 'toxic', imageUrl } = body;
+    const normalizedContent = typeof content === 'string' ? content.trim() : '';
+    const contentLength = Array.from(normalizedContent).length;
 
     // Validate content
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    if (!normalizedContent) {
       return NextResponse.json(
         { success: false, error: 'Content is required' },
+        { status: 400 }
+      );
+    }
+    if (contentLength > QUESTION_CONTENT_MAX_LENGTH) {
+      return NextResponse.json(
+        { success: false, error: `Content is too long (max ${QUESTION_CONTENT_MAX_LENGTH} chars)` },
         { status: 400 }
       );
     }
@@ -46,7 +55,7 @@ export async function POST(request: Request) {
     // Create question
     const question = await QuestionManager.createQuestion({
       userId: user.id,
-      content: content.trim(),
+      content: normalizedContent,
       arenaType: normalizedArenaType,
       imageUrl: imageUrl ?? undefined,
     });
@@ -63,7 +72,7 @@ export async function POST(request: Request) {
       selfParticipantId = participant.id;
       const voteResult = await SecondMePollEngine.callSecondMeForVote({
         participantToken: user.accessToken,
-        question: content.trim(),
+        question: normalizedContent,
         arenaType: normalizedArenaType,
       });
 

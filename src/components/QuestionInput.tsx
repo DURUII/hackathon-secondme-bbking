@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Send, X, User } from "lucide-react";
+import { QUESTION_CONTENT_MAX_LENGTH } from "@/lib/limits";
 
 interface QuestionInputProps {
   onSubmit: (data: { content: string }) => void;
@@ -20,7 +21,7 @@ export function QuestionInput({
   const [content, setContent] = useState(initialContent ?? "");
   const containerRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
-  const MAX_LENGTH = 60;
+  const MAX_LENGTH = QUESTION_CONTENT_MAX_LENGTH;
 
   const clampToMaxLength = (value: string) => {
     const chars = Array.from(value);
