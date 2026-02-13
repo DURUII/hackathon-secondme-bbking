@@ -313,10 +313,43 @@ export class DebateEngine {
       },
       include: {
         seats: { include: { participant: true } },
+        // Only need to know whether this session has started before.
+        turns: { select: { id: true }, take: 1 },
       },
     });
     if (existing) {
-      return { session: existing, created: false };
+      // UX: clicking "挺正方/挺反方" should always start from 一辩开始.
+      // Because sessions are unique per (questionId, initiatorUserId), we reset any existing run that already has timeline.
+      const shouldReset = existing.turns.length > 0 || existing.status === "CLOSED" || existing.status === "ABORTED";
+      if (shouldReset) {
+        await db.$transaction(async (tx) => {
+          await tx.debateTurn.deleteMany({ where: { sessionId: existing.id } });
+          await tx.audienceVoteEvent.deleteMany({ where: { sessionId: existing.id } });
+          await tx.audienceVoteSnapshot.deleteMany({ where: { sessionId: existing.id } });
+          await tx.debateSession.update({
+            where: { id: existing.id },
+            data: {
+              status: "OPENING",
+              winnerSide: null,
+              closedAt: null,
+              abortedAt: null,
+              crossExamEnabled: null,
+              crossExamFirstSide: null,
+              seq: 1,
+              nextTurnAt: new Date(),
+            },
+          });
+        });
+      }
+
+      const refreshed = await db.debateSession.findUnique({
+        where: { id: existing.id },
+        include: { seats: { include: { participant: true } } },
+      });
+      if (!refreshed) {
+        throw new Error("Session not found after reset");
+      }
+      return { session: refreshed, created: false };
     }
 
     const initiator = await db.user.findUnique({
@@ -521,14 +554,11 @@ export class DebateEngine {
           participantName: info.participantName,
         });
 
-        // Prefer act stream (better suited for agent-like actions), fallback to chat stream.
-        let raw = "";
-        try {
-          raw = await fetchActCompletion(token, args.prompt, session.actControl, { signal: stream?.signal, onToken: stream?.onToken });
-        } catch (actErr) {
-          // Act endpoint can reject payloads; chat is a reasonable fallback.
-          raw = await fetchChatCompletion(token, args.prompt, session.systemPrompt, { signal: stream?.signal, onToken: stream?.onToken });
-        }
+        // We want plain-text streaming for subtitles/TTS, so use chat stream for debate turns.
+        const raw = await fetchChatCompletion(token, args.prompt, session.systemPrompt, {
+          signal: stream?.signal,
+          onToken: stream?.onToken,
+        });
         if (!raw) {
           throw new Error("Empty completion");
         }

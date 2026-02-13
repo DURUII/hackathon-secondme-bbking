@@ -6,11 +6,55 @@ import { SecondMePollEngine } from "@/lib/secondme-poll-engine";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const ALLOWED_EMOTIONS = new Set([
+  "happy",
+  "sad",
+  "angry",
+  "fearful",
+  "disgusted",
+  "surprised",
+  "calm",
+  "fluent",
+]);
+
 function pickString(...values: Array<unknown>): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
   return null;
+}
+
+function normalizeEmotion(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const e = v.trim();
+  if (!e) return null;
+  return ALLOWED_EMOTIONS.has(e) ? e : null;
+}
+
+function stripCodeFences(text: string): string {
+  const t = text.trim();
+  const m = t.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  return m ? String(m[1] ?? "").trim() : t;
+}
+
+function extractContentFromJsonish(text: string): string {
+  const stripped = stripCodeFences(text);
+  const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return stripped;
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    const content = typeof parsed?.content === "string" ? parsed.content.trim() : "";
+    return content || stripped;
+  } catch {
+    return stripped;
+  }
+}
+
+function normalizeTtsText(text: string): string {
+  // Avoid the TTS engine spelling out latin letters like "t-a".
+  // Replace standalone ta/TA tokens with "他".
+  const extracted = extractContentFromJsonish(text);
+  return extracted.replace(/\bta\b/gi, "他").replace(/\s+/g, " ").trim();
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -45,15 +89,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       return NextResponse.json({ success: false, error: "Missing session id" }, { status: 400 });
     }
 
-    const body = (await request.json().catch(() => null)) as { seat?: unknown; text?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as { seat?: unknown; text?: unknown; emotion?: unknown } | null;
     const seat = typeof body?.seat === "string" ? body.seat.trim() : "";
     const text = typeof body?.text === "string" ? body.text.trim() : "";
+    const emotion = normalizeEmotion(body?.emotion);
     if (!seat || !text) {
       return NextResponse.json({ success: false, error: "Missing seat or text" }, { status: 400 });
     }
 
     // Hard cap to avoid abuse / huge bills.
-    const clipped = text.slice(0, 140);
+    const clipped = normalizeTtsText(text).slice(0, 140);
 
     const seatRow = await db.debateSeat.findUnique({
       where: { sessionId_seat: { sessionId, seat } },
@@ -77,7 +122,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text: clipped }),
+      body: JSON.stringify({ text: clipped, ...(emotion ? { emotion } : {}) }),
       cache: "no-store",
     });
 
@@ -107,4 +152,3 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return NextResponse.json({ success: false, error: "Failed to generate TTS", details: String(err) }, { status: 500 });
   }
 }
-

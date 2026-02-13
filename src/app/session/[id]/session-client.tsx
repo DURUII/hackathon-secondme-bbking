@@ -9,6 +9,23 @@ const TTS_MAX_CONCURRENCY = 2;
 const AUDIO_PRELOAD_LIMIT = 4;
 const AUTO_RUN_MAX_AUDIO_QUEUE = 6;
 
+type TtsEmotion =
+  | "happy"
+  | "sad"
+  | "angry"
+  | "fearful"
+  | "disgusted"
+  | "surprised"
+  | "calm"
+  | "fluent";
+
+function emotionForStage(stageType: string | null | undefined): TtsEmotion | null {
+  const t = String(stageType ?? "").trim();
+  // 开杠阶段更带情绪（参考 docs/second-me-api/api-reference.md）
+  if (t === "CROSS_Q" || t === "CROSS_A") return "angry";
+  return null;
+}
+
 function formatSeatLabel(seat: string) {
   return seat.replace("_", " ");
 }
@@ -120,8 +137,8 @@ function pickTailPhrase(text: unknown): string {
   return (m ? m[0] : t.slice(-90)).trim();
 }
 
-function ttsCacheKey(seat: string, text: string) {
-  return `${seat}::${text}`;
+function ttsCacheKey(seat: string, emotion: TtsEmotion | null, text: string) {
+  return `${seat}::${emotion ?? "fluent"}::${text}`;
 }
 
 export default function SessionClient({ sessionId }: { sessionId: string }) {
@@ -214,11 +231,11 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
   }, []);
 
   const fetchTtsAudioUrl = useCallback(
-    async (seat: string, text: string): Promise<string | null> => {
+    async (seat: string, text: string, emotion: TtsEmotion | null): Promise<string | null> => {
       const res = await fetch(`/api/session/${sessionId}/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seat, text }),
+        body: JSON.stringify({ seat, text, ...(emotion ? { emotion } : {}) }),
       });
       const j = await readJsonSafe(res);
       if (!res.ok || !j?.success) {
@@ -253,12 +270,13 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
   }, []);
 
   const prefetchTtsAudioUrl = useCallback(
-    async (seat: string, text: string): Promise<string | null> => {
+    async (seat: string, text: string, stageType: string | null | undefined): Promise<string | null> => {
       const s = seat.trim();
       const t = text.replace(/\s+/g, " ").trim();
       if (!s || !t) return null;
 
-      const key = ttsCacheKey(s, t);
+      const emotion = emotionForStage(stageType);
+      const key = ttsCacheKey(s, emotion, t);
       if (Object.prototype.hasOwnProperty.call(ttsUrlCacheRef.current, key)) {
         return ttsUrlCacheRef.current[key] ?? null;
       }
@@ -284,7 +302,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       const task = (async () => {
         await acquire();
         try {
-          const url = await fetchTtsAudioUrl(s, t);
+          const url = await fetchTtsAudioUrl(s, t, emotion);
           ttsUrlCacheRef.current[key] = url;
           primeAudio(url);
           return url;
@@ -317,9 +335,9 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
         setDisplayStageType(item.stageType);
         setDisplayCaption(item.text);
 
-        const currentTask = prefetchTtsAudioUrl(item.seat, item.text);
+        const currentTask = prefetchTtsAudioUrl(item.seat, item.text, item.stageType);
         for (const next of speakQueueRef.current.slice(1, 3)) {
-          void prefetchTtsAudioUrl(next.seat, next.text);
+          void prefetchTtsAudioUrl(next.seat, next.text, next.stageType);
         }
 
         const url = await currentTask;
@@ -388,7 +406,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       const normalizedStageType = (stageType ?? currentStageTypeRef.current ?? "UNKNOWN").trim() || "UNKNOWN";
       speakQueueRef.current.push({ seat, text: cleaned, stageType: normalizedStageType });
       setAudioQueueSize(speakQueueRef.current.length);
-      void prefetchTtsAudioUrl(seat, cleaned);
+      void prefetchTtsAudioUrl(seat, cleaned, normalizedStageType);
       void processSpeakQueue();
     },
     [prefetchTtsAudioUrl, processSpeakQueue, soundEnabled]
