@@ -8,6 +8,8 @@ type Side = "PRO" | "CON";
 const TTS_MAX_CONCURRENCY = 2;
 const AUDIO_PRELOAD_LIMIT = 4;
 const AUTO_RUN_MAX_AUDIO_QUEUE = 6;
+const SOUND_ENABLED_STORAGE_KEY = "secondme:sound_enabled";
+const SOUND_UNLOCK_HINT_STORAGE_KEY = "secondme:sound_unlocked_once";
 
 type TtsEmotion =
   | "happy"
@@ -92,12 +94,41 @@ async function readJsonSafe(res: Response) {
   }
 }
 
+function extractContentFromJsonish(text: string): string {
+  const raw = String(text ?? "").trim();
+  if (!raw) return "";
+
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const stripped = fence ? String(fence[1] ?? "").trim() : raw;
+
+  const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return stripped;
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    const content = typeof parsed?.content === "string" ? parsed.content.trim() : "";
+    return content || stripped;
+  } catch {
+    return stripped;
+  }
+}
+
+function sanitizeDebateText(text: unknown): string {
+  const extracted = extractContentFromJsonish(typeof text === "string" ? text : "");
+  return extracted
+    .replace(/```(?:json)?/gi, " ")
+    .replace(/[{}[\]"]/g, " ")
+    .replace(/\bjson\b/gi, " ")
+    .replace(/\bcontent\b\s*:/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function splitPhrasesFromBuffer(buffer: string, flush = false): { phrases: string[]; rest: string } {
   const phrases: string[] = [];
   let cur = "";
 
   const push = () => {
-    const cleaned = cur.replace(/\s+/g, " ").trim();
+    const cleaned = sanitizeDebateText(cur);
     if (cleaned) phrases.push(cleaned);
     cur = "";
   };
@@ -130,8 +161,7 @@ function splitPhrasesFromBuffer(buffer: string, flush = false): { phrases: strin
 }
 
 function pickTailPhrase(text: unknown): string {
-  const raw = typeof text === "string" ? text : "";
-  const t = raw.replace(/\s+/g, " ").trim();
+  const t = sanitizeDebateText(text);
   if (!t) return "";
   const m = t.match(/[^。！？!?.；;\n]{1,90}[。！？!?.；;]?\s*$/);
   return (m ? m[0] : t.slice(-90)).trim();
@@ -202,6 +232,29 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     autoRunRef.current = autoRun;
   }, [autoRun]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const savedSound = window.localStorage.getItem(SOUND_ENABLED_STORAGE_KEY);
+      if (savedSound === "0") setSoundEnabled(false);
+      if (window.sessionStorage.getItem(SOUND_UNLOCK_HINT_STORAGE_KEY) === "1") {
+        soundUnlockedRef.current = true;
+        setSoundUnlocked(true);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, soundEnabled ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [soundEnabled]);
 
   useEffect(() => {
     return () => {
@@ -485,11 +538,29 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       soundUnlockedRef.current = true;
       setSoundUnlocked(true);
       setSoundBlocked(false);
+      try {
+        window.sessionStorage.setItem(SOUND_UNLOCK_HINT_STORAGE_KEY, "1");
+      } catch {
+        // ignore
+      }
       void processSpeakQueue();
     } catch {
       setSoundBlocked(true);
     }
   }, [processSpeakQueue]);
+
+  useEffect(() => {
+    if (!soundEnabled || soundUnlockedRef.current) return;
+    const onFirstInteraction = () => {
+      void unlockSound();
+    };
+    window.addEventListener("pointerdown", onFirstInteraction, { once: true, capture: true });
+    window.addEventListener("keydown", onFirstInteraction, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", onFirstInteraction, true);
+      window.removeEventListener("keydown", onFirstInteraction, true);
+    };
+  }, [soundEnabled, unlockSound]);
 
   useEffect(() => {
     if (soundEnabled) {
@@ -538,7 +609,13 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       }
 
       setSession(sJson.data);
-      setTurns(Array.isArray(tJson.data) ? tJson.data : []);
+      const normalizedTurns = Array.isArray(tJson.data)
+        ? tJson.data.map((t: Record<string, unknown>) => ({
+            ...t,
+            content: sanitizeDebateText(t?.content),
+          }))
+        : [];
+      setTurns(normalizedTurns);
 
       // Only hydrate drafts once to avoid clobbering user edits due to auto-refresh.
       if (!draftsInitialized) {
@@ -679,7 +756,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       if (!chunk) return;
       ingestStreamChunk(chunk);
       setStreamText((prev) => {
-        const next = prev + chunk;
+        const next = sanitizeDebateText(`${prev}${chunk}`);
         // prevent unbounded growth in UI
         return next.length > 4000 ? next.slice(-4000) : next;
       });
@@ -837,9 +914,9 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       : (lastTurn?.type ?? null);
   const kaigangMode = activeType === "CROSS_Q" || activeType === "CROSS_A";
   const stageSubtitle = audioFollowing
-    ? (displayCaption ?? "")
+    ? sanitizeDebateText(displayCaption ?? "")
     : streaming
-      ? captionCommitted || ""
+      ? sanitizeDebateText(captionCommitted || "")
       : pickTailPhrase(lastTurn?.content) || (turns.length === 0 ? "马东东：自动开杠中，别眨眼。" : "");
 
   const voteBarPercent = useMemo(() => {
@@ -1003,7 +1080,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
 
       <audio ref={audioRef} preload="none" playsInline />
 
-      {soundEnabled && (soundBlocked || (!soundUnlocked && (streaming || audioQueueSize > 0))) ? (
+      {soundEnabled && soundBlocked ? (
         <div className="absolute bottom-6 left-6 z-[1100] w-[min(320px,86vw)] bg-black/60 border border-white/10 rounded-xl p-3 backdrop-blur">
           <div className="text-xs font-black">SOUND LOCKED</div>
           <div className="mt-1 text-[11px] text-white/70">

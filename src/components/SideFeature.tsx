@@ -70,6 +70,26 @@ export default function PilFeature() {
   const startDebateSession = useCallback(
     async (questionId: string, openingPosition: "PRO" | "CON") => {
       try {
+        const resolveExistingSessionId = async (): Promise<string | null> => {
+          if (!currentUserId) return null;
+          const listRes = await fetch(`/api/question/${questionId}/sessions`, { method: "GET" });
+          const listRaw = await listRes.text();
+          let listData: unknown = null;
+          try {
+            listData = listRaw ? JSON.parse(listRaw) : null;
+          } catch {
+            listData = null;
+          }
+          if (!listRes.ok || !listData || typeof listData !== "object") return null;
+          const payload = listData as {
+            success?: boolean;
+            data?: Array<{ id?: string; initiator?: { userId?: string | null } | null }>;
+          };
+          if (!payload.success || !Array.isArray(payload.data)) return null;
+          const mine = payload.data.find((s) => s?.initiator?.userId === currentUserId && typeof s?.id === "string");
+          return mine?.id ?? null;
+        };
+
         // 1) Create or reuse session for this question+initiator.
         const createRes = await fetch(`/api/question/${questionId}/session`, { method: "POST" });
         if (createRes.status === 401) {
@@ -77,15 +97,29 @@ export default function PilFeature() {
           return;
         }
         const createRaw = await createRes.text();
-        const createData = createRaw ? JSON.parse(createRaw) : null;
+        let createData: unknown = null;
+        try {
+          createData = createRaw ? JSON.parse(createRaw) : null;
+        } catch {
+          createData = null;
+        }
 
-        if (!createRes.ok || !createData?.success) {
-          const msg = createData?.error || `Failed to create session (HTTP ${createRes.status})`;
+        if (!createRes.ok || !(createData && typeof createData === "object" && (createData as { success?: boolean }).success)) {
+          const fallbackSessionId = await resolveExistingSessionId();
+          if (fallbackSessionId) {
+            window.location.href = `/session/${fallbackSessionId}?open=${openingPosition}`;
+            return;
+          }
+          const msg =
+            (createData as { error?: string } | null)?.error || `Failed to create session (HTTP ${createRes.status})`;
           alert(msg);
           return;
         }
 
-        const sessionId = createData.data?.id as string | undefined;
+        const sessionId =
+          (createData as { data?: { id?: string } | null } | null)?.data?.id ??
+          (await resolveExistingSessionId()) ??
+          undefined;
         if (!sessionId) {
           alert("Session created but missing id");
           return;
@@ -98,7 +132,7 @@ export default function PilFeature() {
         alert("启动辩论失败，请重试");
       }
     },
-    []
+    [currentUserId]
   );
 
   // Fetch Feed

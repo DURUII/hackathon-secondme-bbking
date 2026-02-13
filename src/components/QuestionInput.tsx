@@ -16,18 +16,19 @@ export function QuestionInput({
   initialContent,
   userAvatar 
 }: QuestionInputProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [content, setContent] = useState("");
+  const [isExpanded, setIsExpanded] = useState(Boolean(initialContent));
+  const [content, setContent] = useState(initialContent ?? "");
   const containerRef = useRef<HTMLDivElement>(null);
-  const MAX_LENGTH = 25;
+  const isComposingRef = useRef(false);
+  const MAX_LENGTH = 60;
 
-  // Sync with initialContent
-  useEffect(() => {
-    if (initialContent) {
-      setContent(initialContent);
-      setIsExpanded(true);
-    }
-  }, [initialContent]);
+  const clampToMaxLength = (value: string) => {
+    const chars = Array.from(value);
+    if (chars.length <= MAX_LENGTH) return value;
+    return chars.slice(0, MAX_LENGTH).join("");
+  };
+
+  const contentLength = Array.from(content).length;
 
   // Click outside to collapse if empty
   useEffect(() => {
@@ -88,18 +89,28 @@ export function QuestionInput({
           <textarea
             value={content}
             onChange={(e) => {
-              if (e.target.value.length <= MAX_LENGTH) {
-                setContent(e.target.value);
+              const next = e.target.value;
+              if (isComposingRef.current) {
+                // During IME composition, avoid hard truncation to prevent character rollback.
+                setContent(next);
+                return;
               }
+              setContent(clampToMaxLength(next));
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              isComposingRef.current = false;
+              setContent(clampToMaxLength(e.currentTarget.value));
             }}
             placeholder="请输入你需要大家评理的事情经过..."
             disabled={isLoading}
             autoFocus
             className="w-full h-32 text-base text-white placeholder:text-white/20 bg-transparent resize-none focus:outline-none font-sans leading-relaxed"
-            maxLength={MAX_LENGTH}
           />
           <div className="absolute bottom-0 right-0 text-xs font-bold text-white/20">
-            {content.length}/{MAX_LENGTH}
+            {contentLength}/{MAX_LENGTH}
           </div>
         </div>
 
