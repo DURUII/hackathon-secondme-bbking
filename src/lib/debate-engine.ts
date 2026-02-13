@@ -322,23 +322,23 @@ export class DebateEngine {
       // Because sessions are unique per (questionId, initiatorUserId), we reset any existing run that already has timeline.
       const shouldReset = existing.turns.length > 0 || existing.status === "CLOSED" || existing.status === "ABORTED";
       if (shouldReset) {
-        await db.$transaction(async (tx) => {
-          await tx.debateTurn.deleteMany({ where: { sessionId: existing.id } });
-          await tx.audienceVoteEvent.deleteMany({ where: { sessionId: existing.id } });
-          await tx.audienceVoteSnapshot.deleteMany({ where: { sessionId: existing.id } });
-          await tx.debateSession.update({
-            where: { id: existing.id },
-            data: {
-              status: "OPENING",
-              winnerSide: null,
-              closedAt: null,
-              abortedAt: null,
-              crossExamEnabled: null,
-              crossExamFirstSide: null,
-              seq: 1,
-              nextTurnAt: new Date(),
-            },
-          });
+        // Avoid transaction usage here to reduce "Transaction not found" issues in dev/HMR.
+        // Best-effort cleanup is good enough for UX: we just want to restart from opening.
+        await db.debateTurn.deleteMany({ where: { sessionId: existing.id } });
+        await db.audienceVoteEvent.deleteMany({ where: { sessionId: existing.id } });
+        await db.audienceVoteSnapshot.deleteMany({ where: { sessionId: existing.id } });
+        await db.debateSession.update({
+          where: { id: existing.id },
+          data: {
+            status: "OPENING",
+            winnerSide: null,
+            closedAt: null,
+            abortedAt: null,
+            crossExamEnabled: null,
+            crossExamFirstSide: null,
+            seq: 1,
+            nextTurnAt: new Date(),
+          },
         });
       }
 

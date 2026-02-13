@@ -508,6 +508,23 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
     fetchAll();
   }, [fetchAll]);
 
+  // Best-effort: if we landed here via "挺正方/挺反方", set opening position in background
+  // without blocking the initial render. This smooths out the long wait on the feed page.
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const open = sp.get("open");
+      if (open !== "PRO" && open !== "CON") return;
+      fetch(`/api/session/${sessionId}/opening`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position: open }),
+      }).catch(() => null);
+    } catch {
+      // ignore
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     const timer = setInterval(() => {
       fetchAll();

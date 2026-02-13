@@ -92,7 +92,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const body = (await request.json().catch(() => null)) as { seat?: unknown; text?: unknown; emotion?: unknown } | null;
     const seat = typeof body?.seat === "string" ? body.seat.trim() : "";
     const text = typeof body?.text === "string" ? body.text.trim() : "";
-    const emotion = normalizeEmotion(body?.emotion);
+    const emotion = normalizeEmotion(body?.emotion) ?? "fluent";
     if (!seat || !text) {
       return NextResponse.json({ success: false, error: "Missing seat or text" }, { status: 400 });
     }
@@ -122,7 +122,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text: clipped, ...(emotion ? { emotion } : {}) }),
+      body: JSON.stringify({ text: clipped, emotion }),
       cache: "no-store",
     });
 

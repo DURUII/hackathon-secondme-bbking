@@ -49,23 +49,22 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       );
     }
 
-    const created = await db.$transaction(async (tx) => {
-      const snap = await tx.audienceVoteSnapshot.create({
-        data: {
-          sessionId,
-          userId: user.id,
-          openingPosition: position,
-          currentPosition: position,
-        },
-      });
-      await tx.audienceVoteEvent.create({
-        data: {
-          sessionId,
-          userId: user.id,
-          position,
-        },
-      });
-      return snap;
+    // Avoid transaction usage here to reduce "Transaction not found" issues in dev/HMR.
+    // Minor inconsistency is acceptable for now; core UX is entering the session quickly.
+    const created = await db.audienceVoteSnapshot.create({
+      data: {
+        sessionId,
+        userId: user.id,
+        openingPosition: position,
+        currentPosition: position,
+      },
+    });
+    await db.audienceVoteEvent.create({
+      data: {
+        sessionId,
+        userId: user.id,
+        position,
+      },
     });
 
     return NextResponse.json({ success: true, data: created });

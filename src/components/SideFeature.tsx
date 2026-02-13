@@ -91,22 +91,8 @@ export default function PilFeature() {
           return;
         }
 
-        // 2) Set opening position (best-effort). If already set, we still proceed.
-        const openRes = await fetch(`/api/session/${sessionId}/opening`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ position: openingPosition }),
-        });
-        if (openRes.status === 401) {
-          window.location.href = "/api/auth/login";
-          return;
-        }
-        if (!openRes.ok && openRes.status !== 409) {
-          // Don't block navigation; user can vote on session page.
-          console.warn("[OPENING_POSITION] failed:", openRes.status);
-        }
-
-        window.location.href = `/session/${sessionId}`;
+        // Don't block navigation on vote/opening I/O; set it on the session page in background.
+        window.location.href = `/session/${sessionId}?open=${openingPosition}`;
       } catch (err) {
         console.error("[START_DEBATE_SESSION] failed:", err);
         alert("启动辩论失败，请重试");
