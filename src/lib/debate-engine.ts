@@ -71,6 +71,53 @@ function pickCrossExamEnabled(): boolean {
   return Math.random() < 0.5;
 }
 
+function isUniqueConstraintError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const maybeCode = (err as { code?: unknown }).code;
+  return maybeCode === "P2002";
+}
+
+function buildFallbackTurnText(args: { stageType: string; seat: Seat; topic: string }): string {
+  const side = seatToSide(args.seat) === "PRO" ? "正方" : "反方";
+  if (args.stageType === "OPENING") {
+    return `我站${side}。围绕「${args.topic}」，真正该看的不是口号而是长期代价。你说得轻巧，但落到现实每一步都要有人买单。今天我先把底线摆明，请对面正面回应。`;
+  }
+  if (args.stageType === "REBUTTAL") {
+    return `对面的论点看起来热闹，其实把因果关系说反了。你把个案当规律，这在逻辑上站不住。我们这边给的是可执行方案，不是情绪口号。请你回答核心矛盾。`;
+  }
+  if (args.stageType === "CROSS_Q") {
+    return `我只问一个关键问题：你的方案成本由谁承担，失败后谁负责？别绕概念，直接回答边界条件。`;
+  }
+  if (args.stageType === "CROSS_A") {
+    return `我正面回答：成本可以被量化并由规则分摊，风险由机制兜底。你如果只强调理想而不给路径，那才是不负责任。`;
+  }
+  if (args.stageType === "CLOSING") {
+    return `总结一句：我们这边既有立场也有路径，既讲价值也讲执行。辩论不是喊得响，而是谁能让现实更稳。请各位把票投给更能落地的一方。`;
+  }
+  return `围绕「${args.topic}」，我方观点明确：先看逻辑，再看代价，最后看可执行性。`;
+}
+
+function extractContentFromJsonish(text: string): string {
+  const raw = String(text ?? "").trim();
+  if (!raw) return "";
+
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const stripped = fence ? String(fence[1] ?? "").trim() : raw;
+
+  const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const content = typeof parsed?.content === "string" ? parsed.content.trim() : "";
+      if (content) return content;
+    } catch {
+      // fallthrough
+    }
+  }
+
+  return stripped;
+}
+
 type StreamOptions = {
   signal?: AbortSignal;
   onToken?: (chunk: string) => void;
@@ -403,28 +450,48 @@ export class DebateEngine {
     }
 
     const now = new Date();
-    const created = await db.debateSession.create({
-      data: {
-        questionId: params.questionId,
-        initiatorUserId: params.initiatorUserId,
-        status: "OPENING",
-        nextTurnAt: now,
-        systemPrompt: String(process.env.DEBATE_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT).trim(),
-        actControl: String(process.env.DEBATE_ACT_CONTROL ?? DEFAULT_ACT_CONTROL).trim(),
-        seats: {
-          create: seatAssignments.map((s) => ({
-            seat: s.seat,
-            participantId: s.participantId,
-          })),
+    try {
+      const created = await db.debateSession.create({
+        data: {
+          questionId: params.questionId,
+          initiatorUserId: params.initiatorUserId,
+          status: "OPENING",
+          nextTurnAt: now,
+          systemPrompt: String(process.env.DEBATE_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT).trim(),
+          actControl: String(process.env.DEBATE_ACT_CONTROL ?? DEFAULT_ACT_CONTROL).trim(),
+          seats: {
+            create: seatAssignments.map((s) => ({
+              seat: s.seat,
+              participantId: s.participantId,
+            })),
+          },
         },
-      },
-      include: {
-        question: true,
-        seats: { include: { participant: true } },
-      },
-    });
-
-    return { session: created, created: true };
+        include: {
+          question: true,
+          seats: { include: { participant: true } },
+        },
+      });
+      return { session: created, created: true };
+    } catch (err) {
+      // Parallel requests for the same (questionId, initiatorUserId) can race.
+      // If another request wins, return that session instead of failing the request.
+      if (!isUniqueConstraintError(err)) {
+        throw err;
+      }
+      const concurrent = await db.debateSession.findUnique({
+        where: {
+          questionId_initiatorUserId: {
+            questionId: params.questionId,
+            initiatorUserId: params.initiatorUserId,
+          },
+        },
+        include: { seats: { include: { participant: true } } },
+      });
+      if (concurrent) {
+        return { session: concurrent, created: false };
+      }
+      throw err;
+    }
   }
 
   static async processDueSessions(limit = 3) {
@@ -554,22 +621,63 @@ export class DebateEngine {
           participantName: info.participantName,
         });
 
-        // We want plain-text streaming for subtitles/TTS, so use chat stream for debate turns.
-        const raw = await fetchChatCompletion(token, args.prompt, session.systemPrompt, {
-          signal: stream?.signal,
-          onToken: stream?.onToken,
-        });
-        if (!raw) {
-          throw new Error("Empty completion");
+        const upstreamErrors: string[] = [];
+
+        // Preferred path: chat stream (best subtitle/TTS continuity).
+        let raw = "";
+        let source: "chat" | "act" | "fallback" = "chat";
+        try {
+          raw = await fetchChatCompletion(token, args.prompt, session.systemPrompt, {
+            signal: stream?.signal,
+            onToken: stream?.onToken,
+          });
+        } catch (chatErr) {
+          upstreamErrors.push(`chat: ${String(chatErr)}`);
         }
+
+        // Fallback 1: act stream (more robust for some upstream behaviors).
+        if (!raw.trim()) {
+          source = "act";
+          try {
+            raw = await fetchActCompletion(token, args.prompt, session.actControl, {
+              signal: stream?.signal,
+            });
+          } catch (actErr) {
+            upstreamErrors.push(`act: ${String(actErr)}`);
+          }
+        }
+
+        // Fallback 2: local emergency copy to keep timeline/subtitle/audio flowing.
+        if (!raw.trim()) {
+          source = "fallback";
+          raw = buildFallbackTurnText({ stageType: args.stageType, seat: args.seat, topic });
+        }
+
+        raw = extractContentFromJsonish(raw);
+        if (source !== "chat" && raw) {
+          // act/fallback does not stream tokens; push final cleaned text once for subtitle/TTS.
+          stream?.onToken?.(raw);
+        }
+
         const content = raw.slice(0, args.maxChars);
         await writeTurn({
           type: args.stageType,
           speakerSeat: args.seat,
           content,
-          meta: { ...(args.meta ?? {}), outcome: "OK" },
+          meta: {
+            ...(args.meta ?? {}),
+            outcome: source === "fallback" ? "FALLBACK" : "OK",
+            source,
+            ...(upstreamErrors.length > 0 ? { upstreamErrors } : {}),
+          },
         });
-        stream?.onEvent?.({ type: "turn_done", outcome: "OK", stageType: args.stageType, seat: args.seat });
+        stream?.onEvent?.({
+          type: "turn_done",
+          outcome: source === "fallback" ? "FALLBACK" : "OK",
+          stageType: args.stageType,
+          seat: args.seat,
+          source,
+        });
       } catch (err) {
         await writeTurn({
           type: args.stageType,

@@ -54,7 +54,14 @@ function normalizeTtsText(text: string): string {
   // Avoid the TTS engine spelling out latin letters like "t-a".
   // Replace standalone ta/TA tokens with "他".
   const extracted = extractContentFromJsonish(text);
-  return extracted.replace(/\bta\b/gi, "他").replace(/\s+/g, " ").trim();
+  const noJsonKeys = extracted
+    .replace(/```(?:json)?/gi, " ")
+    .replace(/[{}[\]"]/g, " ")
+    .replace(/\bjson\b/gi, " ")
+    .replace(/\bcontent\b\s*:/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return noJsonKeys.replace(/\bta\b/gi, "他").replace(/\s+/g, " ").trim();
 }
 
 function asObject(value: unknown): Record<string, unknown> {

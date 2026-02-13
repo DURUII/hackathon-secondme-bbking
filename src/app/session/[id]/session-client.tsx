@@ -171,6 +171,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
   const currentStageTypeRef = useRef<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speakQueueRef = useRef<Array<{ seat: string; text: string; stageType: string }>>([]);
   const speakingRef = useRef(false);
   const [audioQueueSize, setAudioQueueSize] = useState(0);
@@ -318,6 +319,40 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
     [fetchTtsAudioUrl, primeAudio]
   );
 
+  const speakWithBrowserTts = useCallback(async (text: string): Promise<boolean> => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return false;
+    const cleaned = text.replace(/\s+/g, " ").trim();
+    if (!cleaned) return false;
+
+    return new Promise<boolean>((resolve) => {
+      try {
+        const synth = window.speechSynthesis;
+        const utterance = new SpeechSynthesisUtterance(cleaned);
+        const voices = synth.getVoices();
+        const zhVoice = voices.find((v) => /^zh[-_]/i.test(v.lang));
+        if (zhVoice) utterance.voice = zhVoice;
+        utterance.lang = zhVoice?.lang || "zh-CN";
+        utterance.rate = 1;
+        utterance.pitch = 1;
+
+        utterance.onend = () => resolve(true);
+        utterance.onerror = () => resolve(false);
+
+        synth.cancel();
+        speechUtteranceRef.current = utterance;
+        synth.speak(utterance);
+
+        if (!soundUnlockedRef.current) {
+          soundUnlockedRef.current = true;
+          setSoundUnlocked(true);
+        }
+        setSoundBlocked(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  }, []);
+
   const processSpeakQueue = useCallback(async () => {
     if (!soundEnabled) return;
     if (speakingRef.current) return;
@@ -342,6 +377,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
 
         const url = await currentTask;
         if (!url) {
+          await speakWithBrowserTts(item.text);
           speakQueueRef.current.shift();
           continue;
         }
@@ -359,7 +395,13 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
           }
           setSoundBlocked(false);
         } catch {
-          // Autoplay is often blocked until a user gesture occurs.
+          // If media autoplay is blocked or upstream audio is unavailable,
+          // try browser TTS to keep voice continuity.
+          const spoken = await speakWithBrowserTts(item.text);
+          if (spoken) {
+            speakQueueRef.current.shift();
+            continue;
+          }
           setSoundBlocked(true);
           return;
         }
@@ -388,7 +430,7 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
       setAudioBusy(false);
       setAudioQueueSize(speakQueueRef.current.length);
     }
-  }, [prefetchTtsAudioUrl, soundEnabled]);
+  }, [prefetchTtsAudioUrl, soundEnabled, speakWithBrowserTts]);
 
   const enqueueSpeak = useCallback(
     (seat: string | null, stageType: string | null, text: string) => {
@@ -465,6 +507,14 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
         audioRef.current.pause();
         audioRef.current.removeAttribute("src");
         audioRef.current.load();
+      } catch {
+        // ignore
+      }
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+        speechUtteranceRef.current = null;
       } catch {
         // ignore
       }
@@ -679,6 +729,13 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
     return () => {
       if (esRef.current) esRef.current.close();
       esRef.current = null;
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // ignore
+        }
+      }
     };
   }, []);
 
