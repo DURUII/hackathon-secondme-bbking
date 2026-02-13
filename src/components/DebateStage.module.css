@@ -1,0 +1,517 @@
+.stageRoot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #121212;
+  perspective: 1000px;
+}
+
+/* 奇葩说字幕 */
+.qipaSubtitle {
+  font-size: clamp(1.6rem, 3.6vw, 3.2rem);
+  line-height: 1.08;
+  font-weight: 900;
+  text-align: center;
+  max-width: min(980px, 92vw);
+  color: #fadb14;
+  -webkit-text-stroke: 3px #000;
+  text-shadow: 4px 4px 0 #000, -2px -2px 0 rgba(255, 255, 255, 0.25);
+  transform: rotate(-2deg) scale(0.98);
+  transform-origin: center bottom;
+  opacity: 0;
+  transition: transform 180ms ease-out, opacity 180ms ease-out;
+  pointer-events: none;
+  user-select: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.qipaSubtitleActive {
+  opacity: 1;
+  transform: rotate(-2deg) scale(1);
+}
+
+.highlightWord {
+  display: inline-block;
+  color: #ff4d4f;
+  -webkit-text-stroke: 3px #fff;
+  font-size: 1.12em;
+  transform: rotate(4deg) scale(1.04);
+  margin: 0 4px;
+  animation: pulse-word 520ms infinite alternate;
+}
+
+@keyframes pulse-word {
+  from {
+    transform: rotate(4deg) scale(1.04);
+  }
+  to {
+    transform: rotate(2deg) scale(1.16);
+  }
+}
+
+.scene3d {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 800ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.sceneKaigang {
+  transform: scale(1.1) translateY(5%);
+}
+
+.floorGrid {
+  position: absolute;
+  bottom: -10%;
+  left: -30%;
+  width: 160%;
+  height: 55%;
+  background: repeating-linear-gradient(45deg, #1f1f1f 0, #1f1f1f 40px, #2a2a2a 40px, #2a2a2a 80px);
+  transform: rotateX(60deg) scale(2.2);
+  transform-origin: bottom;
+}
+
+.spotlight {
+  position: absolute;
+  top: 0;
+  left: 25%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0));
+  opacity: 0.15;
+  transform: skewX(-12deg);
+  pointer-events: none;
+}
+
+.voxelDebater {
+  position: absolute;
+  width: 100px;
+  height: 140px;
+  transform-style: preserve-3d;
+  transition: all 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.teamRed {
+}
+.teamBlue {
+}
+.teamHost {
+}
+.speaking {
+}
+
+.debaterDimmed {
+  opacity: 0.25;
+  filter: saturate(0.85);
+}
+
+.headCube {
+  width: 80px;
+  height: 80px;
+  position: absolute;
+  left: 10px;
+  top: 0;
+  transform-style: preserve-3d;
+  animation: head-bob 3s infinite ease-in-out;
+}
+
+@keyframes head-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.face {
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  border: 3px solid #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 44px;
+  background: #f1c40f;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+
+.face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.faceFront {
+  transform: rotateY(0deg) translateZ(40px);
+}
+.faceRight {
+  transform: rotateY(90deg) translateZ(40px);
+  background: #e67e22;
+}
+.faceBack {
+  transform: rotateY(180deg) translateZ(40px);
+  background: #333;
+}
+.faceLeft {
+  transform: rotateY(-90deg) translateZ(40px);
+  background: #e67e22;
+}
+.faceTop {
+  transform: rotateX(90deg) translateZ(40px);
+  background: #333;
+}
+.faceBottom {
+  transform: rotateX(-90deg) translateZ(40px);
+  background: #333;
+}
+
+.bodyBlock {
+  width: 60px;
+  height: 50px;
+  position: absolute;
+  top: 80px;
+  left: 20px;
+  border: 3px solid #000;
+  transform-style: preserve-3d;
+  background: #333;
+}
+
+.teamRed .bodyBlock {
+  background: #e74c3c;
+}
+.teamBlue .bodyBlock {
+  background: #3498db;
+}
+.teamHost .bodyBlock {
+  background: #8e44ad;
+}
+
+.hand {
+  width: 15px;
+  height: 30px;
+  background: #f1c40f;
+  border: 2px solid #000;
+  position: absolute;
+  top: 10px;
+  transition: transform 200ms ease-out;
+}
+.handLeft {
+  left: -10px;
+  transform-origin: top right;
+}
+.handRight {
+  right: -10px;
+  transform-origin: top left;
+}
+
+.speaking .handLeft {
+  animation: wave-left 520ms infinite alternate;
+}
+.speaking .handRight {
+  animation: wave-right 520ms infinite alternate-reverse;
+}
+
+@keyframes wave-left {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(45deg);
+  }
+}
+
+@keyframes wave-right {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-45deg);
+  }
+}
+
+.shadow {
+  width: 80px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 50%;
+  position: absolute;
+  bottom: -10px;
+  left: 10px;
+  transform: rotateX(90deg) translateZ(-50px);
+  filter: blur(5px);
+}
+
+.nameTagFloating {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 900;
+  border: 2px solid #fff;
+  border-radius: 6px;
+  white-space: nowrap;
+  z-index: 200;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.teamRed .nameTagFloating {
+  border-color: #ff4d4f;
+  color: #ff4d4f;
+  background: #000;
+}
+.teamBlue .nameTagFloating {
+  border-color: #1890ff;
+  color: #1890ff;
+  background: #000;
+}
+.teamHost .nameTagFloating {
+  border-color: #fadb14;
+  color: #fadb14;
+  background: #000;
+}
+
+.talkBubble {
+  position: absolute;
+  top: -96px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 40px;
+  animation: bubble-bounce 680ms infinite;
+  z-index: 500;
+  pointer-events: none;
+}
+
+@keyframes bubble-bounce {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0);
+  }
+  50% {
+    transform: translateX(-50%) translateY(-8px);
+  }
+}
+
+.hostCue {
+  position: absolute;
+  top: -88px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-2deg);
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 2px solid rgba(250, 219, 20, 0.9);
+  background: rgba(0, 0, 0, 0.86);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  font-weight: 900;
+  font-size: 13px;
+  max-width: 280px;
+  text-align: center;
+  z-index: 600;
+  pointer-events: none;
+}
+
+.muyuEffect {
+  position: absolute;
+  top: -38px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 40px;
+  animation: muyu-float 900ms ease-out infinite;
+  pointer-events: none;
+  z-index: 650;
+}
+
+@keyframes muyu-float {
+  0% {
+    transform: translateX(-50%) scale(0.6);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) translateY(-46px) scale(1.35);
+    opacity: 0;
+  }
+}
+
+.subtitleLayer {
+  position: absolute;
+  bottom: 2.5rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 50;
+  padding: 0 16px;
+  pointer-events: none;
+}
+
+.varietyContent {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.15;
+}
+
+.kaigangOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+  animation: flash 180ms;
+}
+
+@keyframes flash {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.kaigangText {
+  font-size: clamp(5rem, 13vw, 10rem);
+  color: transparent;
+  background: linear-gradient(135deg, #ff4d4f 40%, #1890ff 60%);
+  -webkit-background-clip: text;
+  -webkit-text-stroke: 5px #fff;
+  font-style: italic;
+  animation: shake-hard 160ms infinite;
+}
+
+@keyframes shake-hard {
+  0% {
+    transform: translate(2px, 2px) rotate(0deg);
+  }
+  50% {
+    transform: translate(-2px, -2px) rotate(-2deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(2deg);
+  }
+}
+
+.personaCard {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translate(-50%, -100%);
+  width: 260px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.88);
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.55);
+  z-index: 800;
+  padding: 12px;
+  pointer-events: auto;
+}
+
+.personaCardLeft {
+  left: 0;
+  transform: translate(0, -100%);
+}
+
+.personaCardRight {
+  left: auto;
+  right: 0;
+  transform: translate(0, -100%);
+}
+
+.personaHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.personaAvatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.personaAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.personaName {
+  font-weight: 900;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.personaMeta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.personaBadge {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-weight: 900;
+  font-size: 11px;
+  border: 1px solid rgba(250, 219, 20, 0.7);
+  color: #fadb14;
+  background: rgba(250, 219, 20, 0.06);
+}
+
+.pillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.05);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personaSectionTitle {
+  margin: 10px 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+  font-weight: 900;
+}
+
+.personaBio {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.78);
+}

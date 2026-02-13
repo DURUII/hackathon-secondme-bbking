@@ -24,6 +24,8 @@ interface FeedCardProps {
   isSubscribed?: boolean;
   onToggleSubscribe?: () => void;
   onClick?: () => void;
+  onSupportPro?: () => void;
+  onSupportCon?: () => void;
 }
 
 const ARENA_LABEL_MAP: Record<string, string> = {
@@ -44,6 +46,8 @@ export function FeedCard({
   comments = [],
   previewComments = [],
   onClick,
+  onSupportPro,
+  onSupportCon,
 }: FeedCardProps) {
   const [mounted, setMounted] = useState(false);
 
@@ -168,10 +172,22 @@ export function FeedCard({
 
         {/* 4. Footer Buttons */}
         <div className="grid grid-cols-2 gap-3">
-          <button className="bg-[#FF4D4F] hover:bg-[#ff7875] text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 active:scale-[0.98]">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onSupportPro?.();
+            }}
+            className="bg-[#FF4D4F] hover:bg-[#ff7875] text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 active:scale-[0.98]"
+          >
              <span>挺正方</span>
           </button>
-          <button className="bg-[#1890FF] hover:bg-[#40a9ff] text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 active:scale-[0.98]">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onSupportCon?.();
+            }}
+            className="bg-[#1890FF] hover:bg-[#40a9ff] text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 active:scale-[0.98]"
+          >
              <span>挺反方</span>
           </button>
         </div>

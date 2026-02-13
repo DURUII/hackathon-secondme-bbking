@@ -5,6 +5,9 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Use a non-pgbouncer connection for DDL/migrations.
+  // Runtime can keep using DATABASE_URL with pgbouncer.
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -18,6 +21,9 @@ model User {
 
   sessions          Session[]
   questionSubscriptions QuestionSubscription[]
+  initiatedDebateSessions DebateSession[]
+  audienceVoteEvents      AudienceVoteEvent[]
+  audienceVoteSnapshots   AudienceVoteSnapshot[]
 
   @@map("users")
 }
@@ -47,7 +53,7 @@ model Question {
   votes       Vote[]
   voteTasks   VoteTask[]
   debateRoles DebateRole[]
-  debateTurns DebateTurn[]
+  debateSessions DebateSession[]
   subscriptions QuestionSubscription[]
 
   @@map("questions")
@@ -84,20 +90,101 @@ model DebateRole {
   @@map("debate_roles")
 }
 
+model DebateSession {
+  id                 String    @id @default(cuid())
+  questionId          String    @map("question_id")
+  initiatorUserId     String    @map("initiator_user_id")
+  status              String    @default("RECRUITING") // RECRUITING | OPENING | REBUTTAL | CROSS_EXAM | CLOSING | CLOSED | ABORTED
+  nextTurnAt          DateTime? @map("next_turn_at")
+  seq                 Int       @default(1) // next DebateTurn.seq
+  crossExamEnabled     Boolean?  @map("cross_exam_enabled")
+  crossExamFirstSide   String?   @map("cross_exam_first_side") // PRO | CON
+  winnerSide           String?   @map("winner_side") // PRO | CON | DRAW
+  systemPrompt         String?   @map("system_prompt") @db.Text
+  actControl           String?   @map("act_control") @db.Text
+  promptVersion        String?   @map("prompt_version")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  closedAt             DateTime? @map("closed_at")
+  abortedAt            DateTime? @map("aborted_at")
+
+  question             Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  initiator            User      @relation(fields: [initiatorUserId], references: [id], onDelete: Cascade)
+  seats                DebateSeat[]
+  turns                DebateTurn[]
+  voteEvents           AudienceVoteEvent[]
+  voteSnapshots        AudienceVoteSnapshot[]
+
+  @@unique([questionId, initiatorUserId])
+  @@index([questionId])
+  @@index([status, nextTurnAt])
+  @@map("debate_sessions")
+}
+
+model DebateSeat {
+  id            String   @id @default(cuid())
+  sessionId     String   @map("session_id")
+  seat          String   // PRO_1 | PRO_2 | PRO_3 | CON_1 | CON_2 | CON_3
+  participantId String   @map("participant_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session       DebateSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participant   Participant   @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, seat])
+  @@index([participantId])
+  @@map("debate_seats")
+}
+
 model DebateTurn {
   id          String   @id @default(cuid())
-  questionId  String   @map("question_id")
-  speakerId   String   @map("speaker_id")
-  round       Int
+  sessionId   String   @map("session_id")
+  seq         Int
+  type        String   // OPENING | REBUTTAL | CROSS_Q | CROSS_A | CLOSING | SKIPPED | ERROR | SYSTEM_SUMMARY
+  speakerSeat String?  @map("speaker_seat")
+  speakerParticipantId String? @map("speaker_participant_id")
   content     String   @db.Text
-  type        String   // ARGUMENT, REBUTTAL, SUMMARY
-  voteSwing   Float?   // Impact score
+  meta        Json?
   createdAt   DateTime @default(now()) @map("created_at")
 
-  question    Question    @relation(fields: [questionId], references: [id])
-  speaker     Participant @relation(fields: [speakerId], references: [id])
+  session     DebateSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  speaker     Participant?  @relation(fields: [speakerParticipantId], references: [id])
 
+  @@unique([sessionId, seq])
+  @@index([sessionId])
   @@map("debate_turns")
+}
+
+model AudienceVoteEvent {
+  id        String   @id @default(cuid())
+  sessionId String   @map("session_id")
+  userId    String   @map("user_id")
+  position  String   // PRO | CON
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session   DebateSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audience_vote_events")
+}
+
+model AudienceVoteSnapshot {
+  id             String   @id @default(cuid())
+  sessionId       String  @map("session_id")
+  userId          String  @map("user_id")
+  openingPosition String  @map("opening_position") // PRO | CON
+  currentPosition String  @map("current_position") // PRO | CON
+  openedAt        DateTime @default(now()) @map("opened_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  session         DebateSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@index([sessionId])
+  @@index([userId])
+  @@map("audience_vote_snapshots")
 }
 
 model Vote {
@@ -126,6 +213,7 @@ model Participant {
 
   debateRoles   DebateRole[]
   debateTurns   DebateTurn[]
+  debateSeats   DebateSeat[]
   voteTasks     VoteTask[]
 
   @@map("participants")

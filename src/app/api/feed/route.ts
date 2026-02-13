@@ -68,11 +68,7 @@ export async function GET() {
         where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
         include: {
-          votes: true,
-          debateTurns: {
-            include: { speaker: true },
-            orderBy: { createdAt: 'asc' }
-          }
+          votes: true
         },
         take: 20, 
       }),

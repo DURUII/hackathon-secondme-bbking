@@ -67,6 +67,54 @@ export default function PilFeature() {
 
   const userName = userInfo?.name;
 
+  const startDebateSession = useCallback(
+    async (questionId: string, openingPosition: "PRO" | "CON") => {
+      try {
+        // 1) Create or reuse session for this question+initiator.
+        const createRes = await fetch(`/api/question/${questionId}/session`, { method: "POST" });
+        if (createRes.status === 401) {
+          window.location.href = "/api/auth/login";
+          return;
+        }
+        const createRaw = await createRes.text();
+        const createData = createRaw ? JSON.parse(createRaw) : null;
+
+        if (!createRes.ok || !createData?.success) {
+          const msg = createData?.error || `Failed to create session (HTTP ${createRes.status})`;
+          alert(msg);
+          return;
+        }
+
+        const sessionId = createData.data?.id as string | undefined;
+        if (!sessionId) {
+          alert("Session created but missing id");
+          return;
+        }
+
+        // 2) Set opening position (best-effort). If already set, we still proceed.
+        const openRes = await fetch(`/api/session/${sessionId}/opening`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position: openingPosition }),
+        });
+        if (openRes.status === 401) {
+          window.location.href = "/api/auth/login";
+          return;
+        }
+        if (!openRes.ok && openRes.status !== 409) {
+          // Don't block navigation; user can vote on session page.
+          console.warn("[OPENING_POSITION] failed:", openRes.status);
+        }
+
+        window.location.href = `/session/${sessionId}`;
+      } catch (err) {
+        console.error("[START_DEBATE_SESSION] failed:", err);
+        alert("启动辩论失败，请重试");
+      }
+    },
+    []
+  );
+
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
     try {
@@ -107,16 +155,7 @@ export default function PilFeature() {
     }
   }, []);
 
-  // Frontend Heartbeat Trigger (Simulating Cron)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only trigger if tab is visible
-      if (document.visibilityState === 'visible') {
-        fetch('/api/cron/heartbeat', { method: 'POST' }).catch(e => console.error('Heartbeat failed', e));
-      }
-    }, 30000); // Trigger every 30s to avoid overloading DB on free tiers
-    return () => clearInterval(interval);
-  }, []);
+  // NOTE: Debate heartbeat is server-side only (Vercel Cron / internal secret).
 
   // Poll Feed Updates
   useEffect(() => {
@@ -382,6 +421,8 @@ export default function PilFeature() {
                       previewComments={item.previewComments}
                       comments={item.structuredComments}
                       onClick={() => handleOpenItem(item.id)}
+                      onSupportPro={() => startDebateSession(item.id, "PRO")}
+                      onSupportCon={() => startDebateSession(item.id, "CON")}
                     />
                   )}
                 </div>

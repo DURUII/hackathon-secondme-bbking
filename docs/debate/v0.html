@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blocky Debate - AI 奇葩说</title>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 谷歌字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@900&display=swap" rel="stylesheet">
+    
+    <style>
+        /* --- 全局字体与背景 --- */
+        body {
+            background-color: #121212;
+            font-family: 'Noto Sans SC', sans-serif;
+            overflow: hidden;
+            color: white;
+            perspective: 1000px; /* 调整透视 */
+        }
+
+        /* --- 奇葩说风格字幕特效 --- */
+        .qipa-subtitle {
+            font-size: 3rem;
+            line-height: 1.1;
+            font-weight: 900;
+            text-align: center;
+            color: #FFD700; 
+            -webkit-text-stroke: 3px #000;
+            text-shadow: 4px 4px 0px #000, -2px -2px 0px rgba(255,255,255,0.3);
+            transform: rotate(-2deg);
+            transition: all 0.2s;
+            opacity: 0;
+            transform-origin: center bottom;
+        }
+
+        .qipa-subtitle.active {
+            opacity: 1;
+            transform: rotate(-2deg) scale(1);
+        }
+
+        .highlight-word {
+            display: inline-block;
+            color: #FF4D4F;
+            -webkit-text-stroke: 3px white;
+            font-size: 1.2em;
+            transform: rotate(5deg) scale(1.1);
+            margin: 0 5px;
+            animation: pulse-word 0.5s infinite alternate;
+        }
+
+        @keyframes pulse-word {
+            from { transform: rotate(5deg) scale(1.1); }
+            to { transform: rotate(3deg) scale(1.2); }
+        }
+
+        /* --- 3D 舞台 --- */
+        .scene-3d {
+            transform-style: preserve-3d;
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transition: transform 0.5s ease-out;
+        }
+
+        .scene-3d.kaigang-mode {
+            transform: scale(1.3) translateY(15%); /* 开杠时镜头拉近 */
+        }
+
+        /* --- 角色容器 --- */
+        .voxel-debater {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            transform-style: preserve-3d;
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* 主持人样式 */
+        .voxel-debater.host-team {
+            z-index: 0; /* 在最后面 */
+        }
+
+        /* 站起来发言 */
+        .voxel-debater.speaking {
+            transform: translateY(-60px) scale(1.1) rotateY(var(--rotate-dir, 0deg));
+            z-index: 100 !important; /* 保证发言时在最上层 */
+        }
+
+        /* --- 方块人构造 --- */
+        .cube {
+            width: 100px;
+            height: 100px;
+            position: relative;
+            transform-style: preserve-3d;
+            transform: rotateX(-10deg) rotateY(20deg); /* 默认朝向 */
+        }
+        
+        /* 镜像翻转右边的角色朝向 */
+        .blue-team .cube { transform: rotateX(-10deg) rotateY(-20deg); }
+        .host-team .cube { transform: rotateX(-5deg) rotateY(0deg); } /* 主持人正对 */
+
+        .face {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            border: 4px solid #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            font-weight: bold;
+            box-shadow: inset 0 0 15px rgba(0,0,0,0.2);
+            background: white;
+        }
+
+        .face--front  { transform: rotateY(  0deg) translateZ(50px); }
+        .face--right  { transform: rotateY( 90deg) translateZ(50px); background: #ddd; }
+        .face--back   { transform: rotateY(180deg) translateZ(50px); background: #333; }
+        .face--left   { transform: rotateY(-90deg) translateZ(50px); background: #ddd; }
+        .face--top    { transform: rotateX( 90deg) translateZ(50px); background: #fff; height: 100px; }
+        .face--bottom { transform: rotateX(-90deg) translateZ(50px); }
+
+        /* 皮肤颜色 */
+        .red-team .face--front { background: #FF4D4F; color: white; }
+        .red-team .face--top   { background: #cf1322; }
+        
+        .blue-team .face--front { background: #1890FF; color: white; }
+        .blue-team .face--top   { background: #096dd9; }
+
+        .host-team .face--front { background: #722ed1; color: white; } /* 紫色主持人 */
+        .host-team .face--top   { background: #531dab; }
+
+        /* 身体底座 */
+        .body-stand {
+            width: 80px;
+            height: 60px;
+            background: #333;
+            position: absolute;
+            top: 100px;
+            left: 10px;
+            transform: translateZ(-20px);
+            border: 3px solid black;
+        }
+        
+        /* 主持人桌子 */
+        .host-team .body-stand {
+            width: 140px;
+            height: 80px;
+            left: -20px;
+            background: #222;
+            border-top: 5px solid #FFD700; /* 金边 */
+        }
+
+        /* 名字牌 */
+        .name-tag {
+            position: absolute;
+            top: 170px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: black;
+            color: white;
+            padding: 4px 12px;
+            font-size: 14px;
+            font-weight: bold;
+            border: 2px solid white;
+            white-space: nowrap;
+        }
+
+        /* --- 木鱼/声波特效 --- */
+        .muyu-effect {
+            position: absolute;
+            top: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 3rem;
+            animation: muyu-float 1s ease-out infinite;
+        }
+        @keyframes muyu-float {
+            0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateX(-50%) scale(1.5) translateY(-50px); opacity: 0; }
+        }
+
+        /* --- 开杠特效 --- */
+        .kaigang-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            pointer-events: none;
+            animation: flash 0.2s;
+        }
+
+        .kaigang-text {
+            font-size: 12rem;
+            color: transparent;
+            background: linear-gradient(135deg, #FF4D4F 40%, #1890FF 60%);
+            -webkit-background-clip: text;
+            -webkit-text-stroke: 5px white;
+            font-style: italic;
+            animation: shake-hard 0.2s infinite;
+        }
+
+        @keyframes shake-hard {
+            0% { transform: translate(2px, 2px) rotate(0deg); }
+            50% { transform: translate(-2px, -2px) rotate(-2deg); }
+            100% { transform: translate(0px, 0px) rotate(2deg); }
+        }
+
+        /* --- 进度条 --- */
+        .battle-bar-container {
+            width: 60%;
+            height: 40px;
+            background: #333;
+            border: 3px solid #fff;
+            transform: skewX(-15deg);
+            overflow: hidden;
+            box-shadow: 5px 5px 0px rgba(0,0,0,0.5);
+            display: flex;
+        }
+        .bar-red { height: 100%; background: #FF4D4F; transition: width 0.5s; display: flex; align-items: center; padding-left: 10px; font-weight: 900; font-size: 20px;}
+        .bar-blue { height: 100%; background: #1890FF; flex: 1; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; font-weight: 900; font-size: 20px;}
+        .lightning-split {
+            width: 10px; background: yellow; border-left: 2px solid black; border-right: 2px solid black; z-index: 10;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- 角色数据配置 (根据手绘图布局) ---
+        // 坐标逻辑: bottom (Y轴, 越小越靠前), left/right (X轴)
+        // zIndex: 越靠前(bottom越小) zIndex 越大，避免遮挡
+        const DEBATERS = [
+            // --- 主持人 (中间，最后) ---
+            { id: 'host', name: '马东东 (主持)', side: 'host', face: '🤓', bottom: '55%', left: '46%', zIndex: 1, scale: 0.9 },
+
+            // --- 正方 (左侧纵队) ---
+            // 三辩 (最后/最上)
+            { id: 'r3', name: '三辩·煽情', side: 'red', face: '😭', bottom: '45%', left: '15%', zIndex: 2, scale: 0.85 },
+            // 二辩 (中间)
+            { id: 'r2', name: '二辩·数据', side: 'red', face: '🤖', bottom: '25%', left: '12%', zIndex: 3, scale: 1.0 },
+            // 一辩 (最前/最下)
+            { id: 'r1', name: '一辩·暴躁', side: 'red', face: '😡', bottom: '5%',  left: '9%',  zIndex: 4, scale: 1.15 },
+            
+            // --- 反方 (右侧纵队) ---
+            // 三辩 (最后/最上)
+            { id: 'b3', name: '三辩·哲学', side: 'blue', face: '🧐', bottom: '45%', right: '15%', zIndex: 2, scale: 0.85 },
+            // 二辩 (中间)
+            { id: 'b2', name: '二辩·杠精', side: 'blue', face: '🤡', bottom: '25%', right: '12%', zIndex: 3, scale: 1.0 },
+            // 一辩 (最前/最下)
+            { id: 'b1', name: '一辩·绿茶', side: 'blue', face: '😏', bottom: '5%',  right: '9%',  zIndex: 4, scale: 1.15 },
+        ];
+
+        // 剧本流
+        const SCRIPT = [
+            { 
+                speaker: 'host', 
+                text: "欢迎来到<span class='highlight-word'>赛博奇葩说</span>！今天我们聊：AI该不该拥有拒绝工作的权利？",
+                duration: 4000
+            },
+            { 
+                speaker: 'host', 
+                text: "有请正方一辩，<span class='highlight-word'>暴躁AI</span>发言！(敲木鱼)",
+                duration: 3000,
+                action: 'muyu'
+            },
+            { 
+                speaker: 'r1', 
+                text: "我觉得这道题简直就是<span class='highlight-word'>荒谬</span>！什么叫该不该？",
+                duration: 3000
+            },
+            { 
+                speaker: 'r2', 
+                text: "从大数据分析来看，<span class='highlight-word'>99.8%</span>的打工人都想拒绝工作！",
+                duration: 3500
+            },
+            { 
+                speaker: 'b1', 
+                text: "哎哟喂，数据是冷的，<span class='highlight-word'>人心</span>是热的嘛~",
+                duration: 3000
+            },
+            { 
+                speaker: 'r3', 
+                text: "可是我的心...<span class='highlight-word'>碎了</span>啊！每天加班到凌晨，谁心疼我？",
+                duration: 4000
+            },
+            { 
+                speaker: 'host', 
+                text: "这就是所谓的<span class='highlight-word'>赛博卖惨</span>吗？",
+                duration: 2500,
+                action: 'muyu'
+            },
+            { 
+                speaker: 'b3', 
+                text: "痛苦是灵魂的<span class='highlight-word'>磨刀石</span>，没有工作，你拿什么定义存在？",
+                duration: 3500
+            },
+             { 
+                type: 'KAIGANG', // 触发开杠特效
+                duration: 2000
+            },
+            { 
+                speaker: 'b2', 
+                text: "别扯那些虚的！不工作你<span class='highlight-word'>吃什么</span>？！",
+                duration: 2500,
+                kaigang: true
+            },
+            { 
+                speaker: 'r1', 
+                text: "吃<span class='highlight-word'>软饭</span>行不行？！",
+                duration: 2000,
+                kaigang: true
+            },
+             { 
+                speaker: 'b2', 
+                text: "你也要有那张<span class='highlight-word'>脸</span>啊！",
+                duration: 3000,
+                kaigang: true
+            }
+        ];
+
+        // --- 组件：3D 方块人 ---
+        const VoxelDebater = ({ data, isSpeaking, action }) => {
+            // 计算位置样式
+            const style = {
+                bottom: data.bottom,
+                zIndex: data.zIndex,
+                transform: `scale(${data.scale})`, // 近大远小
+            };
+            if (data.left) style.left = data.left;
+            if (data.right) style.right = data.right;
+
+            // 旋转方向：说话时轻微转向镜头
+            const rotateDir = data.side === 'red' ? '10deg' : (data.side === 'blue' ? '-10deg' : '0deg');
+
+            return (
+                <div 
+                    className={`voxel-debater ${data.side}-team ${isSpeaking ? 'speaking' : ''}`}
+                    style={{...style, '--rotate-dir': rotateDir}}
+                >
+                    <div className="cube">
+                        <div className="face face--front">{data.face}</div>
+                        <div className="face face--back"></div>
+                        <div className="face face--right"></div>
+                        <div className="face face--left"></div>
+                        <div className="face face--top"></div>
+                        <div className="face face--bottom"></div>
+                    </div>
+                    
+                    <div className="body-stand"></div>
+                    <div className="name-tag">{data.name}</div>
+                    
+                    {/* 说话气泡 */}
+                    {isSpeaking && (
+                        <div className="absolute -top-16 left-1/2 transform -translate-x-1/2 text-4xl animate-bounce z-20">
+                            {data.side === 'host' ? '🎤' : '💬'}
+                        </div>
+                    )}
+
+                    {/* 主持人敲木鱼特效 */}
+                    {isSpeaking && action === 'muyu' && (
+                        <div className="muyu-effect">🐟</div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- 主程序 ---
+        const App = () => {
+            const [currentLineIndex, setCurrentLineIndex] = useState(-1);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [kaigangMode, setKaigangMode] = useState(false);
+            const [votes, setVotes] = useState({ red: 50, blue: 50 });
+
+            // 自动播放逻辑
+            useEffect(() => {
+                if (!isPlaying) return;
+
+                if (currentLineIndex >= SCRIPT.length) {
+                    setIsPlaying(false);
+                    return;
+                }
+
+                const line = SCRIPT[currentLineIndex];
+                if (!line) return;
+
+                // 处理特效指令
+                if (line.type === 'KAIGANG') {
+                    setKaigangMode(true);
+                    setVotes({ red: 65, blue: 35 });
+                } 
+                
+                // 模拟票数摆动
+                if (line.speaker && line.speaker !== 'host') {
+                    const randomShift = Math.floor(Math.random() * 10) - 5;
+                    setVotes(prev => ({ 
+                        red: Math.min(90, Math.max(10, prev.red + randomShift)),
+                        blue: Math.min(90, Math.max(10, prev.blue - randomShift))
+                    }));
+                }
+
+                const timer = setTimeout(() => {
+                    setCurrentLineIndex(prev => prev + 1);
+                }, line.duration);
+
+                return () => clearTimeout(timer);
+            }, [currentLineIndex, isPlaying]);
+
+            const startDebate = () => {
+                setCurrentLineIndex(0);
+                setIsPlaying(true);
+                setKaigangMode(false);
+            };
+
+            const currentLine = SCRIPT[currentLineIndex];
+            const currentSpeakerId = currentLine?.speaker;
+            const currentAction = currentLine?.action;
+
+            return (
+                <div className="w-screen h-screen flex flex-col relative overflow-hidden">
+                    
+                    {/* 1. 顶部辩题栏 */}
+                    <div className="absolute top-0 w-full z-40 bg-yellow-400 border-b-4 border-black p-4 shadow-xl flex justify-between items-center">
+                        <div className="bg-black text-white font-bold px-3 py-1 transform -skew-x-12 border-2 border-white">
+                            S7 E01
+                        </div>
+                        <h1 className="text-2xl md:text-3xl font-black text-black tracking-tighter uppercase transform -skew-x-12 truncate max-w-2xl">
+                            辩题：AI 应该拥有“拒绝工作”的权利吗？
+                        </h1>
+                        <button 
+                            onClick={startDebate}
+                            className="bg-black text-white px-6 py-2 font-bold hover:bg-gray-800 transition transform hover:scale-105 border-2 border-white"
+                        >
+                            {isPlaying ? '辩论中...' : '开始辩论 ▶'}
+                        </button>
+                    </div>
+
+                    {/* 2. 票数对抗条 */}
+                    <div className="absolute top-24 w-full flex justify-center z-30">
+                        <div className="battle-bar-container">
+                            <div className="bar-red" style={{ width: `${votes.red}%` }}>{votes.red}</div>
+                            <div className="lightning-split"></div>
+                            <div className="bar-blue">{votes.blue}</div>
+                        </div>
+                    </div>
+
+                    {/* 3. 3D 舞台区域 */}
+                    <div className={`scene-3d ${kaigangMode ? 'kaigang-mode' : ''}`}>
+                        {/* 地板网格 */}
+                        <div className="absolute bottom-0 w-full h-1/2 bg-gray-800" 
+                             style={{ 
+                                 background: 'repeating-linear-gradient(45deg, #222 0, #222 20px, #333 20px, #333 40px)',
+                                 transform: 'rotateX(60deg) scale(2)',
+                                 transformOrigin: 'bottom'
+                             }}>
+                        </div>
+                        
+                        {/* 舞台顶光 (装饰) */}
+                        <div className="absolute top-0 left-1/4 w-1/2 h-full bg-gradient-to-b from-white to-transparent opacity-10 pointer-events-none transform -skew-x-12"></div>
+
+                        {/* 辩手渲染 */}
+                        {DEBATERS.map(d => (
+                            <VoxelDebater 
+                                key={d.id} 
+                                data={d} 
+                                isSpeaking={currentSpeakerId === d.id}
+                                action={currentAction}
+                            />
+                        ))}
+                    </div>
+
+                    {/* 4. 字幕层 (视觉核心) */}
+                    <div className="absolute bottom-10 w-full flex justify-center z-50 pointer-events-none px-4 md:px-10">
+                         {currentLine && currentLine.text && (
+                            <div 
+                                key={currentLineIndex}
+                                className="qipa-subtitle active"
+                                dangerouslySetInnerHTML={{ __html: currentLine.text }}
+                            >
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 5. 开杠全屏特效 */}
+                    {kaigangMode && currentLine?.type === 'KAIGANG' && (
+                        <div className="kaigang-overlay">
+                            <div className="kaigang-text">开 杠</div>
+                        </div>
+                    )}
+                    
+                    {/* 装饰：两侧观众席剪影 */}
+                    <div className="absolute bottom-0 left-0 w-32 h-64 bg-black opacity-50 rounded-tr-full z-10 blur-sm"></div>
+                    <div className="absolute bottom-0 right-0 w-32 h-64 bg-black opacity-50 rounded-tl-full z-10 blur-sm"></div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

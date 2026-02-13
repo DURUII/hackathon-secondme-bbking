@@ -1,318 +1,780 @@
-import { db } from '@/lib/db';
-import { SecondMePollEngine } from './secondme-poll-engine';
+import { db } from "@/lib/db";
+import { SecondMePollEngine } from "@/lib/secondme-poll-engine";
 
-const ROLES_ORDER = ['PRO_1', 'CON_1', 'PRO_2', 'CON_2', 'PRO_3', 'CON_3'];
-const MAX_ROUNDS = 2; // Simple MVP: 1 round of arguments, 1 round of closing
+const SEATS = ["PRO_1", "CON_1", "PRO_2", "CON_2", "PRO_3", "CON_3"] as const;
+type Seat = (typeof SEATS)[number];
+type Side = "PRO" | "CON";
 
-export class DebateEngine {
-  
-  // 1. Recruiting Phase
-  static async processRecruiting() {
-    const pendingQuestions = await db.question.findMany({
-      where: { status: 'pending', deletedAt: null },
-      include: { debateRoles: true },
-      take: 1
-    });
+const CROSS_EXAM_ROUNDS = 5;
+const DEFAULT_TURN_DELAY_MS = 5000;
 
-    if (pendingQuestions.length === 0) return { recruited: 0 };
+const DEFAULT_SYSTEM_PROMPT = [
+  "你是一名参加辩论赛的辩手。",
+  "要求：中文输出，观点鲜明，像奇葩说，尽量口语化但不骂人、不做人身攻击。",
+  "必须有冲突感：要么直接反驳对方一个具体观点/逻辑漏洞，要么预判对方会怎么说并提前拆解。",
+  "尽量用短句输出（2-5句为宜），每句尽量以「。」「！」「？」收尾，避免长段落，方便逐句字幕与语音。",
+  "不要自我介绍，不要列清单。",
+].join("\n");
 
-    // Check active participants
-    const participants = await db.participant.findMany({
-      where: { isActive: true },
-      take: 10
-    });
+const DEFAULT_ACT_CONTROL = [
+  "你将输出结构化 JSON。",
+  "请严格只输出一个 JSON 对象，不要输出任何额外文本。",
+  'JSON Schema: {"content": "string"}',
+  "要求：content 为中文辩词，像奇葩说，观点鲜明，有冲突感（要反驳/拆对方），不骂人、不做人身攻击。",
+  "尽量用短句输出（2-5句为宜），每句尽量以「。」「！」「？」收尾，避免长段落。",
+  "不要自我介绍，不要列清单。",
+  "示例：{\"content\":\"我支持...因为...\"}",
+].join("\n");
 
-    const question = pendingQuestions[0];
+function seatToSide(seat: Seat): Side {
+  return seat.startsWith("PRO") ? "PRO" : "CON";
+}
 
-    // Idempotency: if roles already exist (e.g. previous partial run), just move forward.
-    if (question.debateRoles.length > 0) {
-      await db.question.update({
-        where: { id: question.id },
-        data: {
-          status: 'DEBATING_R1',
-          round: 1,
-          nextTurnAt: new Date(),
+function otherSide(side: Side): Side {
+  return side === "PRO" ? "CON" : "PRO";
+}
+
+function shuffle<T>(arr: readonly T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function clampInt(n: unknown, fallback: number): number {
+  const v = typeof n === "string" ? Number(n) : typeof n === "number" ? n : NaN;
+  return Number.isFinite(v) ? Math.trunc(v) : fallback;
+}
+
+function normalizeSide(s: unknown): Side | null {
+  if (s === "PRO" || s === "CON") return s;
+  return null;
+}
+
+function getTurnDelayMs(): number {
+  const v = clampInt(process.env.DEBATE_TURN_DELAY_MS, DEFAULT_TURN_DELAY_MS);
+  return Math.max(0, v);
+}
+
+function getCrossExamForce(): "on" | "off" | "random" {
+  const v = String(process.env.CROSS_EXAM_FORCE ?? "random").toLowerCase();
+  if (v === "on" || v === "off" || v === "random") return v;
+  return "random";
+}
+
+function pickCrossExamEnabled(): boolean {
+  const force = getCrossExamForce();
+  if (force === "on") return true;
+  if (force === "off") return false;
+  return Math.random() < 0.5;
+}
+
+type StreamOptions = {
+  signal?: AbortSignal;
+  onToken?: (chunk: string) => void;
+};
+
+async function fetchChatCompletion(
+  token: string,
+  prompt: string,
+  systemPrompt?: string | null,
+  stream?: StreamOptions
+): Promise<string> {
+  const SECONDME_API_BASE_URL = process.env.SECONDME_API_BASE_URL ?? "https://app.mindos.com/gate/lab";
+
+  const sys = String(systemPrompt ?? process.env.DEBATE_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT).trim();
+
+  const res = await fetch(`${SECONDME_API_BASE_URL}/api/secondme/chat/stream`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    signal: stream?.signal,
+    body: JSON.stringify({
+      messages: [
+        {
+          role: "system",
+          content: sys,
         },
-      });
-      return { recruited: 0, resumed: 1 };
-    }
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
 
-    // For MVP: If we have at least 1 participant and the question owner, we can start
-    // This allows single-user testing while still having a "debate"
-    const minParticipants = 1;
-
-    if (participants.length < minParticipants) {
-      console.log(`[DebateEngine] Not enough participants. Need ${minParticipants}, have ${participants.length}`);
-      return { recruited: 0, waitingFor: minParticipants - participants.length };
-    }
-
-    // Shuffle and pick up to 6 participants
-    const shuffled = participants.sort(() => 0.5 - Math.random()).slice(0, 6);
-    if (shuffled.length === 0) {
-      return { recruited: 0, waitingFor: 1 };
-    }
-    
-    // Assign roles (bounded by available participants)
-    for (let i = 0; i < shuffled.length; i++) {
-      await db.debateRole.upsert({
-        where: {
-          questionId_participantId: {
-            questionId: question.id,
-            participantId: shuffled[i].id,
-          },
-        },
-        update: {
-          role: ROLES_ORDER[i],
-          initialStance: i % 2 === 0 ? 100 : -100,
-          currentStance: i % 2 === 0 ? 100 : -100,
-        },
-        create: {
-          questionId: question.id,
-          participantId: shuffled[i].id,
-          role: ROLES_ORDER[i],
-          initialStance: i % 2 === 0 ? 100 : -100, // Pro = 100, Con = -100
-          currentStance: i % 2 === 0 ? 100 : -100,
-        },
-      });
-    }
-
-    // Update Question
-    await db.question.update({
-      where: { id: question.id },
-      data: {
-        status: 'DEBATING_R1',
-        round: 1,
-        nextTurnAt: new Date() // Start immediately
-      }
-    });
-
-    console.log(`[DebateEngine] Started debate for question ${question.id}`);
-    return { recruited: 1 };
+  if (!res.ok) {
+    throw new Error(`SecondMe chat stream error: ${res.status}`);
   }
 
-  // 2. Debating Phase
-  static async processDebating() {
-    const activeQuestions = await db.question.findMany({
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const data = await res.json().catch(() => null);
+    if (typeof data?.code === "number" && data.code !== 0) {
+      throw new Error(`SecondMe chat error: code=${data.code} message=${data.message ?? ""} subCode=${data.subCode ?? ""}`);
+    }
+    const text =
+      data?.choices?.[0]?.message?.content ??
+      data?.resp?.content ??
+      data?.data?.content ??
+      data?.content ??
+      "";
+    const out = String(text ?? "").trim();
+    if (out) stream?.onToken?.(out);
+    return out;
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let aggregate = "";
+  let upstreamErr: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffered += decoder.decode(value, { stream: !done });
+    const lines = buffered.split(/\r?\n/);
+    buffered = lines.pop() ?? "";
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith("data:")) continue;
+      const dataStr = line.slice(5).trim();
+      if (!dataStr || dataStr === "[DONE]") continue;
+      try {
+        const json = JSON.parse(dataStr);
+        if (typeof json?.code === "number" && json.code !== 0) {
+          upstreamErr = `code=${json.code} message=${json.message ?? ""} subCode=${json.subCode ?? ""}`;
+        }
+        const chunk =
+          json?.choices?.[0]?.delta?.content ??
+          json?.choices?.[0]?.message?.content ??
+          json?.resp?.content ??
+          json?.data?.content ??
+          json?.content;
+        if (typeof chunk === "string" && chunk.length > 0) {
+          aggregate += chunk;
+          stream?.onToken?.(chunk);
+        }
+      } catch {
+        // Some SSE providers stream plain text in `data:` lines.
+        if (dataStr && !dataStr.startsWith("{")) {
+          aggregate += dataStr;
+          stream?.onToken?.(dataStr);
+        }
+      }
+    }
+
+    if (done) break;
+  }
+
+  const out = aggregate.trim();
+  if (!out && upstreamErr) {
+    throw new Error(`SecondMe chat upstream error: ${upstreamErr}`);
+  }
+  return out;
+}
+
+async function fetchActCompletion(
+  token: string,
+  prompt: string,
+  actControl?: string | null,
+  stream?: StreamOptions
+): Promise<string> {
+  const SECONDME_API_BASE_URL = process.env.SECONDME_API_BASE_URL ?? "https://app.mindos.com/gate/lab";
+
+  const actionControl = String(actControl ?? process.env.DEBATE_ACT_CONTROL ?? DEFAULT_ACT_CONTROL).trim();
+
+  const res = await fetch(`${SECONDME_API_BASE_URL}/api/secondme/act/stream`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    signal: stream?.signal,
+    body: JSON.stringify({
+      message: prompt,
+      actionControl,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`SecondMe act stream error: ${res.status}`);
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const data = await res.json().catch(() => null);
+    if (typeof data?.code === "number" && data.code !== 0) {
+      throw new Error(`SecondMe act error: code=${data.code} message=${data.message ?? ""} subCode=${data.subCode ?? ""}`);
+    }
+    const text =
+      data?.data?.content ??
+      data?.resp?.content ??
+      data?.content ??
+      data?.choices?.[0]?.message?.content ??
+      "";
+    const out = String(text ?? "").trim();
+    if (out) stream?.onToken?.(out);
+    return out;
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let aggregate = "";
+  let upstreamErr: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffered += decoder.decode(value, { stream: !done });
+    const lines = buffered.split(/\r?\n/);
+    buffered = lines.pop() ?? "";
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith("data:")) continue;
+      const dataStr = line.slice(5).trim();
+      if (!dataStr || dataStr === "[DONE]") continue;
+      try {
+        const json = JSON.parse(dataStr);
+        if (typeof json?.code === "number" && json.code !== 0) {
+          upstreamErr = `code=${json.code} message=${json.message ?? ""} subCode=${json.subCode ?? ""}`;
+        }
+        const chunk =
+          json?.data?.content ??
+          json?.data?.resp?.content ??
+          json?.resp?.content ??
+          json?.choices?.[0]?.delta?.content ??
+          json?.choices?.[0]?.message?.content ??
+          json?.content;
+        if (typeof chunk === "string" && chunk.length > 0) {
+          aggregate += chunk;
+          stream?.onToken?.(chunk);
+        }
+      } catch {
+        if (dataStr && !dataStr.startsWith("{")) {
+          aggregate += dataStr;
+          stream?.onToken?.(dataStr);
+        }
+      }
+    }
+
+    if (done) break;
+  }
+
+  const out = aggregate.trim();
+  if (!out && upstreamErr) {
+    throw new Error(`SecondMe act upstream error: ${upstreamErr}`);
+  }
+  // Act is intended to return JSON; try to parse `content`.
+  const jsonMatch = out.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const content = typeof parsed?.content === "string" ? parsed.content.trim() : "";
+      if (content) return content;
+    } catch {
+      // fallthrough
+    }
+  }
+  return out;
+}
+
+function formatContext(turns: Array<{ speakerSeat: string | null; content: string }>, maxChars: number): string {
+  const raw = turns
+    .map((t) => `${t.speakerSeat ?? "UNKNOWN"}: ${t.content}`)
+    .join("\n")
+    .slice(-maxChars);
+  return raw;
+}
+
+export class DebateEngine {
+  static async createSession(params: { questionId: string; initiatorUserId: string }) {
+    const question = await db.question.findFirst({
+      where: { id: params.questionId, deletedAt: null },
+      select: { id: true, content: true, arenaType: true },
+    });
+    if (!question) {
+      throw new Error("Question not found");
+    }
+
+    const existing = await db.debateSession.findUnique({
       where: {
-        deletedAt: null,
-        status: { startsWith: 'DEBATING' },
-        nextTurnAt: { lte: new Date() }
+        questionId_initiatorUserId: {
+          questionId: params.questionId,
+          initiatorUserId: params.initiatorUserId,
+        },
       },
       include: {
-        debateRoles: { include: { participant: true } },
-        debateTurns: true
+        seats: { include: { participant: true } },
+      },
+    });
+    if (existing) {
+      return { session: existing, created: false };
+    }
+
+    const initiator = await db.user.findUnique({
+      where: { id: params.initiatorUserId },
+      select: { id: true, secondmeUserId: true },
+    });
+    if (!initiator) {
+      throw new Error("Initiator not found");
+    }
+
+    const initiatorParticipant = await db.participant.findUnique({
+      where: { secondmeId: initiator.secondmeUserId },
+      select: { id: true },
+    });
+    const initiatorParticipantId = initiatorParticipant?.id ?? null;
+
+    const usersWithToken = await db.user.findMany({
+      where: {
+        accessToken: { not: "demo-token" },
+      },
+      select: { secondmeUserId: true },
+      take: 200,
+    });
+    const secondmeIds = usersWithToken.map((u) => u.secondmeUserId);
+
+    const candidates = await db.participant.findMany({
+      where: {
+        isActive: true,
+        secondmeId: { in: secondmeIds },
+        ...(initiatorParticipantId ? { id: { not: initiatorParticipantId } } : {}),
+      },
+      select: { id: true, name: true },
+      take: 200,
+    });
+
+    if (candidates.length === 0) {
+      throw new Error("No eligible participants (logged-in tokens) available");
+    }
+
+    const seats = shuffle(SEATS);
+    const uniquePicks = shuffle(candidates).slice(0, Math.min(candidates.length, seats.length));
+    const seatAssignments: Array<{ seat: Seat; participantId: string }> = [];
+
+    for (let i = 0; i < seats.length; i++) {
+      if (i < uniquePicks.length) {
+        seatAssignments.push({ seat: seats[i], participantId: uniquePicks[i].id });
+      } else {
+        const picked = candidates[Math.floor(Math.random() * candidates.length)];
+        seatAssignments.push({ seat: seats[i], participantId: picked.id });
       }
+    }
+
+    const now = new Date();
+    const created = await db.debateSession.create({
+      data: {
+        questionId: params.questionId,
+        initiatorUserId: params.initiatorUserId,
+        status: "OPENING",
+        nextTurnAt: now,
+        systemPrompt: String(process.env.DEBATE_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT).trim(),
+        actControl: String(process.env.DEBATE_ACT_CONTROL ?? DEFAULT_ACT_CONTROL).trim(),
+        seats: {
+          create: seatAssignments.map((s) => ({
+            seat: s.seat,
+            participantId: s.participantId,
+          })),
+        },
+      },
+      include: {
+        question: true,
+        seats: { include: { participant: true } },
+      },
+    });
+
+    return { session: created, created: true };
+  }
+
+  static async processDueSessions(limit = 3) {
+    const due = await db.debateSession.findMany({
+      where: {
+        status: { notIn: ["CLOSED", "ABORTED"] },
+        nextTurnAt: { lte: new Date() },
+      },
+      select: { id: true },
+      orderBy: { nextTurnAt: "asc" },
+      take: limit,
     });
 
     let processed = 0;
+    let advanced = 0;
+    let closed = 0;
 
-    for (const q of activeQuestions) {
-      await this.processTurn(q);
+    for (const s of due) {
+      const result = await this.processOneSession(s.id);
       processed++;
+      if (result.advanced) advanced++;
+      if (result.closed) closed++;
     }
 
-    return { processedTurns: processed };
+    return { due: due.length, processed, advanced, closed };
   }
 
-  private static async processTurn(question: any) {
-    // Determine next speaker
-    // Logic: Check existing turns in this round, find who hasn't spoken
-    const currentRoundTurns = question.debateTurns.filter((t: any) => t.round === question.round);
-    const turnsCount = currentRoundTurns.length;
+  static async tickSession(
+    sessionId: string,
+    stream?: { signal?: AbortSignal; onEvent?: (evt: { type: string; [k: string]: any }) => void; onToken?: (chunk: string) => void }
+  ): Promise<{ advanced: boolean; closed: boolean }> {
+    return this.processOneSession(sessionId, stream);
+  }
 
-    if (turnsCount >= ROLES_ORDER.length) {
-      // Round complete
-      if (question.round >= MAX_ROUNDS) {
-        // All rounds complete -> Close
-        await db.question.update({
-          where: { id: question.id },
-          data: { status: 'CLOSED', nextTurnAt: null }
+  private static async processOneSession(
+    sessionId: string,
+    stream?: { signal?: AbortSignal; onEvent?: (evt: { type: string; [k: string]: any }) => void; onToken?: (chunk: string) => void }
+  ): Promise<{ advanced: boolean; closed: boolean }> {
+    const session = await db.debateSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        question: { select: { id: true, content: true } },
+        seats: { include: { participant: true } },
+        turns: { orderBy: { seq: "asc" } },
+      },
+    });
+    if (!session) return { advanced: false, closed: false };
+
+    const seatMap = new Map<string, { participantId: string; participantName: string }>();
+    for (const seat of session.seats) {
+      seatMap.set(seat.seat, { participantId: seat.participantId, participantName: seat.participant.name });
+    }
+
+    const ensureSeat = (seat: Seat) => {
+      const info = seatMap.get(seat);
+      if (!info) throw new Error(`Missing seat assignment: ${seat}`);
+      return info;
+    };
+
+    const now = new Date();
+    const delayMs = getTurnDelayMs();
+    const scheduleNext = async () => {
+      await db.debateSession.update({
+        where: { id: session.id },
+        data: { nextTurnAt: new Date(Date.now() + delayMs) },
+      });
+    };
+
+    const writeTurn = async (params: {
+      type: string;
+      speakerSeat: Seat;
+      content: string;
+      meta?: any;
+    }) => {
+      const speaker = ensureSeat(params.speakerSeat);
+
+      // Use the session.seq field as "next seq" cursor.
+      const seq = session.seq;
+      const trimmed = String(params.content ?? "").trim();
+      const content = trimmed.length > 0 ? trimmed : "(EMPTY)";
+
+      await db.debateTurn.create({
+        data: {
+          sessionId: session.id,
+          seq,
+          type: params.type,
+          speakerSeat: params.speakerSeat,
+          speakerParticipantId: speaker.participantId,
+          content,
+          meta: params.meta ?? undefined,
+        },
+      });
+      await db.debateSession.update({
+        where: { id: session.id },
+        data: { seq: { increment: 1 } },
+      });
+    };
+
+    const hasSlot = (type: string, seat: Seat) =>
+      session.turns.some((t) => t.type === type && t.speakerSeat === seat);
+
+    const generateForSeat = async (args: {
+      stageType: string;
+      seat: Seat;
+      prompt: string;
+      maxChars: number;
+      meta?: any;
+    }) => {
+      const info = ensureSeat(args.seat);
+      const token = await SecondMePollEngine.getFreshToken(info.participantId);
+      if (!token) {
+        await writeTurn({
+          type: args.stageType,
+          speakerSeat: args.seat,
+          content: `(SKIPPED) ${info.participantName} token missing`,
+          meta: { ...(args.meta ?? {}), outcome: "SKIPPED" },
         });
+        await scheduleNext();
         return;
-      } else {
-        // Next round
-        await db.question.update({
-          where: { id: question.id },
-          data: { 
-            round: question.round + 1,
-            // status: `DEBATING_R${question.round + 1}`, // Optional: update status string
-            nextTurnAt: new Date(Date.now() + 5000) // 5s break
-          }
-        });
-        return;
       }
-    }
 
-    // Who is next?
-    const nextRole = ROLES_ORDER[turnsCount];
-    const debater = question.debateRoles.find((r: any) => r.role === nextRole);
-
-    if (!debater) {
-      console.error(`[DebateEngine] Missing debater for role ${nextRole}`);
-      return;
-    }
-
-    // Get User Token
-    const user = await db.user.findUnique({
-      where: { secondmeUserId: debater.participant.secondmeId }
-    });
-
-    if (!user) {
-      console.error(`[DebateEngine] User not found for participant ${debater.participant.name}`);
-      // Skip this turn or mock it? For "Real User" requirement, we might have to skip or fail.
-      // But to keep flow going, maybe skip.
-      return;
-    }
-
-    // Generate Content
-    console.log(`[DebateEngine] Generating turn for ${debater.role} (${debater.participant.name})...`);
-    
-    // Construct Prompt
-    const prompt = `
-      You are participating in a debate.
-      Topic: "${question.content}"
-      Your Role: ${debater.role.startsWith('PRO') ? 'Proponent (Support)' : 'Opponent (Oppose)'}.
-      Your Style: ${debater.participant.interests.join(', ')}.
-      
-      Current Stage: Round ${question.round}.
-      
-      Context:
-      ${question.debateTurns.map((t: any) => `${t.speakerId}: ${t.content}`).join('\n').slice(-500)}
-      
-      Please provide a short, punchy argument (max 100 words).
-    `;
-
-    // Call API using /act/stream which is more suitable for agent actions
-    let content = "";
-    try {
-        content = await this.fetchActCompletion(user.accessToken, prompt);
-    } catch (e) {
-        console.error("API Call failed", e);
-        content = "(AI Connection Failed) I stand by my point!";
-    }
-
-    // Save Turn
-    await db.debateTurn.create({
-      data: {
-        questionId: question.id,
-        speakerId: debater.participantId,
-        round: question.round,
-        type: 'ARGUMENT',
-        content: content,
-        voteSwing: (Math.random() * 10) - 5 // Random swing for visual effect
-      }
-    });
-
-    // Schedule next turn
-    await db.question.update({
-      where: { id: question.id },
-      data: {
-        nextTurnAt: new Date(Date.now() + 5000) // 5s delay for reading
-      }
-    });
-  }
-
-  private static async fetchActCompletion(token: string, prompt: string): Promise<string> {
-    try {
-        const res = await fetch('https://app.mindos.com/gate/lab/api/secondme/act/stream', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                topic: "debate",
-                action: "argument",
-                context: { prompt } // Pass prompt in context for act API
-            })
+      try {
+        stream?.onEvent?.({
+          type: "turn_start",
+          stageType: args.stageType,
+          seat: args.seat,
+          participantName: info.participantName,
         });
 
-        if (!res.ok) throw new Error(res.statusText);
-
-        // Parse act stream response (similar to chat but structure might differ)
-        // Assuming similar SSE format for MVP
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let result = '';
-
-        if (!reader) return "Error: No response body";
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6);
-                    if (dataStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(dataStr);
-                        // Adjust parsing based on Act API response structure
-                        // Usually it returns a 'thought' or 'action' content
-                        if (json.data?.content) {
-                            result += json.data.content;
-                        } else if (json.choices?.[0]?.delta?.content) {
-                             result += json.choices[0].delta.content;
-                        }
-                    } catch (e) {}
-                }
-            }
+        // Prefer act stream (better suited for agent-like actions), fallback to chat stream.
+        let raw = "";
+        try {
+          raw = await fetchActCompletion(token, args.prompt, session.actControl, { signal: stream?.signal, onToken: stream?.onToken });
+        } catch (actErr) {
+          // Act endpoint can reject payloads; chat is a reasonable fallback.
+          raw = await fetchChatCompletion(token, args.prompt, session.systemPrompt, { signal: stream?.signal, onToken: stream?.onToken });
         }
-        return result || "I have a point to make.";
-    } catch (e) {
-        console.error("Act Error", e);
-        // Fallback to chat if act fails
-        return this.fetchChatCompletion(token, prompt);
-    }
-  }
-
-  private static async fetchChatCompletion(token: string, prompt: string): Promise<string> {
-    // Simplified SSE reader for MVP
-    // In real prod, use a proper parser.
-    try {
-        const res = await fetch('https://app.mindos.com/gate/lab/api/secondme/chat/stream', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                messages: [{ role: 'user', content: prompt }]
-            })
-        });
-
-        if (!res.ok) throw new Error(res.statusText);
-
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let result = '';
-
-        if (!reader) return "Error: No response body";
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value);
-            // Parse SSE format: data: {...}
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6);
-                    if (dataStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(dataStr);
-                        if (json.choices?.[0]?.delta?.content) {
-                            result += json.choices[0].delta.content;
-                        }
-                    } catch (e) {}
-                }
-            }
+        if (!raw) {
+          throw new Error("Empty completion");
         }
-        return result || "I have no words.";
-    } catch (e) {
-        console.error("Chat Error", e);
-        return "I am speechless.";
+        const content = raw.slice(0, args.maxChars);
+        await writeTurn({
+          type: args.stageType,
+          speakerSeat: args.seat,
+          content,
+          meta: { ...(args.meta ?? {}), outcome: "OK" },
+        });
+        stream?.onEvent?.({ type: "turn_done", outcome: "OK", stageType: args.stageType, seat: args.seat });
+      } catch (err) {
+        await writeTurn({
+          type: args.stageType,
+          speakerSeat: args.seat,
+          content: "(ERROR) upstream generation failed",
+          meta: { ...(args.meta ?? {}), outcome: "ERROR", error: String(err) },
+        });
+        stream?.onEvent?.({ type: "turn_done", outcome: "ERROR", stageType: args.stageType, seat: args.seat, error: String(err) });
+      }
+      await scheduleNext();
+    };
+
+    const topic = session.question.content;
+
+    if (session.status === "OPENING") {
+      if (!hasSlot("OPENING", "PRO_1")) {
+        await generateForSeat({
+          stageType: "OPENING",
+          seat: "PRO_1",
+          maxChars: 220,
+          prompt: [
+            `你在进行一场辩论。辩题：「${topic}」`,
+            `你的席位：PRO_1（正方一辩，开篇立论）。`,
+            `要求：200字以内，语言像奇葩说，观点明确；用2-4句短句输出，每句尽量以「。」「！」「？」结尾；最后一句给对方下战书。不要自我介绍，不要列清单。`,
+          ].join("\n"),
+          meta: { stage: "OPENING" },
+        });
+        return { advanced: true, closed: false };
+      }
+      if (!hasSlot("OPENING", "CON_1")) {
+        await generateForSeat({
+          stageType: "OPENING",
+          seat: "CON_1",
+          maxChars: 220,
+          prompt: [
+            `你在进行一场辩论。辩题：「${topic}」`,
+            `你的席位：CON_1（反方一辩，开篇立论）。`,
+            `要求：200字以内，语言像奇葩说，观点明确；用2-4句短句输出，每句尽量以「。」「！」「？」结尾；最后一句给对方下战书。不要自我介绍，不要列清单。`,
+          ].join("\n"),
+          meta: { stage: "OPENING" },
+        });
+        return { advanced: true, closed: false };
+      }
+
+      await db.debateSession.update({
+        where: { id: session.id },
+        data: { status: "REBUTTAL", nextTurnAt: now },
+      });
+      return { advanced: false, closed: false };
     }
+
+    if (session.status === "REBUTTAL") {
+      const openingTurns = session.turns.filter((t) => t.type === "OPENING");
+      const openingContext = formatContext(
+        openingTurns.map((t) => ({ speakerSeat: t.speakerSeat, content: t.content })),
+        900
+      );
+
+      if (!hasSlot("REBUTTAL", "PRO_2")) {
+        await generateForSeat({
+          stageType: "REBUTTAL",
+          seat: "PRO_2",
+          maxChars: 220,
+          prompt: [
+            `你在进行一场辩论。辩题：「${topic}」`,
+            `你的席位：PRO_2（正方二辩，驳论）。`,
+            `你可以看到开篇立论：`,
+            openingContext ? openingContext : "(无)",
+            `要求：200字以内；必须点名引用对方一个具体论点（可用引号简短引用），然后拆穿漏洞并给出更强的解释；用2-4句短句输出，每句尽量以「。」结尾，像奇葩说。`,
+          ].join("\n"),
+          meta: { stage: "REBUTTAL" },
+        });
+        return { advanced: true, closed: false };
+      }
+      if (!hasSlot("REBUTTAL", "CON_2")) {
+        await generateForSeat({
+          stageType: "REBUTTAL",
+          seat: "CON_2",
+          maxChars: 220,
+          prompt: [
+            `你在进行一场辩论。辩题：「${topic}」`,
+            `你的席位：CON_2（反方二辩，驳论）。`,
+            `你可以看到开篇立论：`,
+            openingContext ? openingContext : "(无)",
+            `要求：200字以内；必须点名引用对方一个具体论点（可用引号简短引用），然后拆穿漏洞并给出更强的解释；用2-4句短句输出，每句尽量以「。」结尾，像奇葩说。`,
+          ].join("\n"),
+          meta: { stage: "REBUTTAL" },
+        });
+        return { advanced: true, closed: false };
+      }
+
+      const crossExamEnabled = session.crossExamEnabled ?? pickCrossExamEnabled();
+      const crossExamFirstSide =
+        crossExamEnabled && !normalizeSide(session.crossExamFirstSide)
+          ? (Math.random() < 0.5 ? ("PRO" as const) : ("CON" as const))
+          : normalizeSide(session.crossExamFirstSide);
+
+      await db.debateSession.update({
+        where: { id: session.id },
+        data: {
+          crossExamEnabled,
+          crossExamFirstSide: crossExamFirstSide ?? undefined,
+          status: crossExamEnabled ? "CROSS_EXAM" : "CLOSING",
+          nextTurnAt: now,
+        },
+      });
+      return { advanced: false, closed: false };
+    }
+
+    if (session.status === "CROSS_EXAM") {
+      const crossTurns = session.turns.filter((t) => t.type === "CROSS_Q" || t.type === "CROSS_A");
+      const totalNeeded = CROSS_EXAM_ROUNDS * 2;
+      if (crossTurns.length >= totalNeeded) {
+        await db.debateSession.update({
+          where: { id: session.id },
+          data: { status: "CLOSING", nextTurnAt: now },
+        });
+        return { advanced: false, closed: false };
+      }
+
+      const firstSide = normalizeSide(session.crossExamFirstSide) ?? "PRO";
+      const round = Math.floor(crossTurns.length / 2) + 1;
+      const isQ = crossTurns.length % 2 === 0;
+      const questionerSide = round % 2 === 1 ? firstSide : otherSide(firstSide);
+      const answererSide = otherSide(questionerSide);
+      const questionerSeat: Seat = questionerSide === "PRO" ? "PRO_2" : "CON_2";
+      const answererSeat: Seat = answererSide === "PRO" ? "PRO_2" : "CON_2";
+
+      const historyContext = formatContext(
+        session.turns.map((t) => ({ speakerSeat: t.speakerSeat, content: t.content })),
+        1400
+      );
+
+      if (isQ) {
+        await generateForSeat({
+          stageType: "CROSS_Q",
+          seat: questionerSeat,
+          maxChars: 120,
+          prompt: [
+            `你在进行一场辩论的奇袭问答环节。辩题：「${topic}」`,
+            `本轮：第${round}轮，你是提问方（${questionerSide} 二辩）。`,
+            `历史上下文：`,
+            historyContext ? historyContext : "(无)",
+            `要求：只输出一个问题，80字以内；必须针对对方刚才的一个具体点发问（可用极短引述）；问题结尾用「？」；尖锐具体，不要总结。`,
+          ].join("\n"),
+          meta: { stage: "CROSS_EXAM", round, kind: "Q", questionerSide },
+        });
+        return { advanced: true, closed: false };
+      }
+
+      const lastQ = [...crossTurns].reverse().find((t) => t.type === "CROSS_Q")?.content ?? "";
+      await generateForSeat({
+        stageType: "CROSS_A",
+        seat: answererSeat,
+        maxChars: 180,
+        prompt: [
+          `你在进行一场辩论的奇袭问答环节。辩题：「${topic}」`,
+          `本轮：第${round}轮，你是回答方（${answererSide} 二辩）。`,
+          `对方问题：「${lastQ}」`,
+          `历史上下文：`,
+          historyContext ? historyContext : "(无)",
+          `要求：只输出回答，150字以内；先用一句话拆掉对方问题的暗含前提，再直接回答；不要反问；尽量2-4句短句，每句尽量以「。」收尾。`,
+        ].join("\n"),
+        meta: { stage: "CROSS_EXAM", round, kind: "A", answererSide },
+      });
+      return { advanced: true, closed: false };
+    }
+
+    if (session.status === "CLOSING") {
+      const prior = session.turns.filter((t) => t.type !== "CLOSING");
+      const context = formatContext(
+        prior.map((t) => ({ speakerSeat: t.speakerSeat, content: t.content })),
+        1600
+      );
+
+      if (!hasSlot("CLOSING", "PRO_3")) {
+        await generateForSeat({
+          stageType: "CLOSING",
+          seat: "PRO_3",
+          maxChars: 220,
+          prompt: [
+            `你在进行一场辩论。辩题：「${topic}」`,
+            `你的席位：PRO_3（正方三辩，结辩）。`,
+            `你可以看到全局历史：`,
+            context ? context : "(无)",
+            `要求：200字以内；必须总结己方核心胜点并点名戳破对方一处漏洞；尽量3-5句短句输出，每句尽量以「。」结尾；最后一句给观众一个能记住的金句，像奇葩说。`,
+          ].join("\n"),
+          meta: { stage: "CLOSING" },
+        });
+        return { advanced: true, closed: false };
+      }
+      if (!hasSlot("CLOSING", "CON_3")) {
+        await generateForSeat({
+          stageType: "CLOSING",
+          seat: "CON_3",
+          maxChars: 220,
+          prompt: [
+            `你在进行一场辩论。辩题：「${topic}」`,
+            `你的席位：CON_3（反方三辩，结辩）。`,
+            `你可以看到全局历史：`,
+            context ? context : "(无)",
+            `要求：200字以内；必须总结己方核心胜点并点名戳破对方一处漏洞；尽量3-5句短句输出，每句尽量以「。」结尾；最后一句给观众一个能记住的金句，像奇葩说。`,
+          ].join("\n"),
+          meta: { stage: "CLOSING" },
+        });
+        return { advanced: true, closed: false };
+      }
+
+      // Settle winner by swing.
+      const snapshots = await db.audienceVoteSnapshot.findMany({
+        where: { sessionId: session.id },
+        select: { openingPosition: true, currentPosition: true },
+      });
+      const openingPro = snapshots.filter((s) => s.openingPosition === "PRO").length;
+      const finalPro = snapshots.filter((s) => s.currentPosition === "PRO").length;
+      const netSwing = finalPro - openingPro;
+      const winnerSide: "PRO" | "CON" | "DRAW" = netSwing > 0 ? "PRO" : netSwing < 0 ? "CON" : "DRAW";
+
+      await db.debateSession.update({
+        where: { id: session.id },
+        data: {
+          status: "CLOSED",
+          closedAt: now,
+          nextTurnAt: null,
+          winnerSide,
+        },
+      });
+      return { advanced: false, closed: true };
+    }
+
+    // Unknown status -> abort to avoid tight loops.
+    await db.debateSession.update({
+      where: { id: session.id },
+      data: { status: "ABORTED", abortedAt: now, nextTurnAt: null },
+    });
+    return { advanced: false, closed: false };
   }
 }

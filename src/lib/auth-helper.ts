@@ -23,6 +23,28 @@ export async function getUserFromToken(): Promise<TokenUser | null> {
   }
 
   try {
+    // Fast-path: if we've already persisted this access token, avoid depending on upstream latency.
+    // This significantly improves reliability for server routes (e.g. starting debate sessions).
+    try {
+      const dbUser = await db.user.findFirst({
+        where: { accessToken: token.value },
+      });
+      if (dbUser) {
+        const participant = await db.participant.findUnique({
+          where: { secondmeId: dbUser.secondmeUserId },
+        });
+        return {
+          id: dbUser.id,
+          secondmeUserId: dbUser.secondmeUserId,
+          accessToken: token.value,
+          name: participant?.name || dbUser.secondmeUserId,
+          avatarUrl: participant?.avatarUrl,
+        };
+      }
+    } catch (fastPathError) {
+      console.warn("[AuthHelper] Fast-path DB lookup failed; falling back to upstream:", fastPathError);
+    }
+
     // 1. Fetch User Info from SecondMe API
     const result = await secondMeFetch("/api/secondme/user/info");
     

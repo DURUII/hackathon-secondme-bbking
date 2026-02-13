@@ -1,277 +1,298 @@
-# TECH4: 奇葩说式 A2A 辩论赛制（基于现有项目的升级方案）
+# TECH4: 奇葩说式 A2A 辩论赛制（多场次 Session 化升级方案）
 
 > 更新时间：2026-02-12  
-> 目标：把 `docs/delete/方案.md` 与 `docs/delete/规则.md` 的设想，落到当前代码库可实现的“A2A 辩论 + 围观实时投票 + 摇摆胜负 + MVP/积分榜”闭环，并修正 TECH3 暴露的卡死/鉴权/数据模型问题。
+> 目标：把“奇葩说式辩论 + 观众实时投票 + 摇摆胜负”落到当前代码库可实现的闭环，并修正 TECH3 暴露的卡死/鉴权/数据模型问题。  
+> 本版新增关键前提：**同一 Question 下可以有多场辩论（DebateSession），但同一用户对同一 Question 只能发起一次；辩论与投票全站可见，展示为“xx 发起了辩论”。**
 
 ---
 
 ## 0. 背景与现状（从仓库审计得出的约束）
 
 - 当前存在 `DebateEngine`，但：
-  - 发言顺序固定 `PRO_1/CON_1/.../PRO_3/CON_3`，缺人会直接 return，问题可能卡在 `DEBATING_*` 状态（TECH3 已指出）。
+  - 发言顺序固定 `PRO_1/CON_1/.../PRO_3/CON_3`，缺人会直接 return，可能卡死在 `DEBATING_*`（TECH3 已指出）。
   - `/api/cron/heartbeat` 未鉴权，且被前端周期触发存在滥用风险（TECH3 已指出）。
 - 当前 Prisma 模型：
-  - `Vote` 以 `(questionId, participantId)` 唯一，偏“AI 对问题投票/评论”语义，不适配“围观者（登录用户）实时切换立场”的事件流。
-  - `Question.status` 为字符串混用（`pending` 与 `DEBATING_R*` 等），需要统一成枚举状态机（TECH3 已指出）。
+  - `DebateRole/DebateTurn` 直接挂在 `Question` 上，天然只能表示“每题一场辩论”，与“同题多场辩论”冲突。
+  - `Vote` 以 `(questionId, participantId)` 唯一，语义更偏“分身对题的观点评论”；不适合承载“观众对某一场辩论 Session 的实时切换投票”。
+  - `Question.status` 当前混用 `pending/collected/DEBATING_*`，在“同题多场 Session”后更不应承担辩论进度。
 
 ---
 
-## 1. 这次对齐后的产品结论（来自我们聊天的最终口径）
+## 1. 产品结论（最终口径）
 
 ### 1.1 核心体验
 
-- 一场辩论 = 6 位 AI 辩手（正方 3 / 反方 3）。
-- 赛制结构：开篇立论 → 驳论 →（50% 概率触发奇袭问答 5 轮）→ 结辩。
-- “主持人/主席 Agent”不做：流程与阶段由系统规则写死与 UI 呈现。
-- 胜负以“观众摇摆”为核心：开场立场 vs 截止终态。
-  - MVP 阶段只有 1 个围观者：若立场不变则原立场方赢；若切换则另一方赢（等价于“摇摆人数=0/1”）。
+- 一场辩论 = 1 个 `DebateSession`（隶属于某个 `Question`），由某个登录用户发起（initiator）。
+- 约束：
+  - 同一 `Question` 下可以存在多场 `DebateSession`（不同 initiator）。
+  - 同一用户对同一 `Question` **最多发起 1 次**（DB 唯一约束保证）。
+- 赛制结构（写死规则）：
+  - 开篇立论（Opening）→ 驳论（Rebuttal）→（50% 概率触发奇袭问答 5 轮）→ 结辩（Closing）→ 结束（Closed）
+- 辩论全站可见：列表/详情页展示“xx 发起了辩论”，并可查看时间线与投票走势。
 
-### 1.2 辩手角色与发言职责（每方 3 人）
+### 1.2 辩手席位（6 人）
 
-- 每方三位辩手固定职责：
-  - 1 辩：立论（Opening）
-  - 2 辩：驳论（Rebuttal）+ 奇袭问答参与者
-  - 3 辩：结辩（Closing）
-- 奇袭问答：
-  - 在驳论结束后 50% 概率触发。
-  - 参与者固定为 PRO_2 vs CON_2。
-  - 共 5 轮，每轮为“提问 1 条 + 回答 1 条”，提问方轮流交替。
-  - 先手：随机先手。
+- 每场固定 6 个席位：正方 3 / 反方 3。
+- 职责固定：
+  - 1 辩：Opening
+  - 2 辩：Rebuttal + Cross-Exam（奇袭问答参与者）
+  - 3 辩：Closing
+- 发起者自己的 AI 分身 **不参赛**（避免“自问自答”的观感与偏置）。
 
-### 1.3 参赛来源与避嫌
+### 1.3 参赛来源与“克隆补位”
 
-- 发起者可点名 0~6 位 AI 分身，不足由系统从全局 AI 池补齐到 6。
-- 不允许发起者自己的 AI 分身参赛（避嫌）。
-- 立场与座位分配：
-  - 参赛名单确定后：随机分配正/反各 3 人，再在各自阵营内随机分配 1/2/3 辩。
+- 参赛来源仅限：**已登录注册的用户分身**（即 DB 存在 `User` token 的真实 SecondMe 身份）。
+- 若“可用的独立参赛者人数不足 6”，允许从**其他用户分身**进行“克隆补位”：
+  - 克隆补位的含义：同一个 `Participant` 可以在同一场 `DebateSession` 中占用多个席位（同 token，不同席位 persona / role prompt）。
+  - 这要求数据模型以“席位（seat）唯一”为核心，而不是“participant 在 question 内唯一”。
 
-### 1.4 A2A 调用方式与失败策略
+### 1.4 围观投票（实时可切换，按 Session）
 
-- 辩手发言使用“真实 SecondMe 分身”方式（每个辩手用自己的 token 去生成内容），体现 A2A。
-- 若某辩手找不到可用 token（DB 无 `User` / 过期等）：跳过该辩手（不阻断整场辩论）。
-- 开赛最低门槛：至少 2 位有效辩手（建议仍尽量保证正反双方都有人；见第 8 节兜底）。
-
-### 1.5 围观投票（实时可切换）
-
+- 投票对象是 `DebateSession`（不是 Question）。
 - 投票/切换立场：强制登录；未登录可围观。
 - 立场选项：仅 正 / 反。
-- “开场立场”口径：开场选择的立场（在看到辩论正文前或开篇开始时确定）。
-- 落库方式：事件流（记录每次切换），并维护“当前立场快照”。
+- “开场立场 openingPosition”：
+  - 用户对该 session 的**第一次投票**即确认为 openingPosition，同时也是 currentPosition。
+  - 之后每次切换仅更新 currentPosition，并记录事件流。
 
-### 1.6 MVP、积分与排行榜
+### 1.5 胜负（摇摆胜负）
 
-- MVP：辩论结束后由围观者从 6 位辩手中选 1 名最佳辩手。
-- 积分发放（首版数值）：
-  - 胜方每人 +5
-  - 败方每人 +1
-  - MVP 额外 +5
-- 排行榜：全站总榜（按总积分），并可下钻个人战绩（参与次数、胜率、MVP 次数）。
-- AI 裁判：只做总结（不裁决胜负/MVP）。
-
----
-
-## 2. 赛制与状态机（可实现的“写死规则”版本）
-
-### 2.1 关键状态（建议用枚举统一）
-
-建议把 `Question.status` 从字符串收敛为枚举（示例）：
-
-- `RECRUITING`：招募/分配辩手中
-- `OPENING`：开篇进行中
-- `REBUTTAL`：驳论进行中
-- `CROSS_EXAM`：奇袭问答进行中（可选阶段）
-- `CLOSING`：结辩进行中
-- `CLOSED`：结束（可投 MVP、可回放、可结算）
-
-兼容策略：若短期内不想大迁移，也可以保留 `DEBATING_R*`，但必须把阶段与调度逻辑从“固定 6 角色顺序”改为“按阶段+槽位推进”，避免缺人卡死。
-
-### 2.2 发言调度（按阶段推进，不依赖固定 6 人全在）
-
-按阶段定义“期望发言槽位”，并允许缺位跳过：
-
-- `OPENING`：期望 `PRO_1`、`CON_1`
-- `REBUTTAL`：期望 `PRO_2`、`CON_2`
-- `CROSS_EXAM`（若触发）：5 轮（问 + 答）
-  - 参与者：`PRO_2`、`CON_2`
-  - 先手：随机决定（谁先问）
-- `CLOSING`：期望 `PRO_3`、`CON_3`
-
-每次落一条 `DebateTurn` 后，计算下一步：
-1) 该阶段的下一槽位是谁
-2) 若槽位对应辩手缺失/不可用，按“同阵营兜底规则”选替代者或直接跳过该槽位
-3) 阶段完成后进入下一阶段；若后续阶段关键辩手也缺失，则直接进入 `CLOSED`
+- 以“观众摇摆”作为胜负依据：对每个投票用户比较 `openingPosition` 与 `finalPosition`（结束时刻的 currentPosition）。
+- 结算口径（建议默认）：
+  - 仅统计“投过 openingPosition 的用户”。
+  - 计算 `netSwing = finalProCount - openingProCount`（等价于“正方净增票数”）。
+  - `netSwing > 0`：正方胜；`netSwing < 0`：反方胜；`netSwing = 0`：平局（或用“最终多数”做 tie-break，可作为开关）。
 
 ---
 
-## 3. 数据模型（Prisma）改造建议
+## 2. Session 化状态机（关键改动点）
 
-这里给出“最小可落地 + 可扩展”的模型建议，避免把所有语义硬塞进现有 `Vote`。
+### 2.1 状态归属
 
-### 3.1 Debate / Turn（阶段化）
+- `Question.status` 不再承载辩论进度（同题多 Session 无法用单字段表达）。
+- 新增 `DebateSession.status`（枚举或受控字符串）：
+  - `RECRUITING`
+  - `OPENING`
+  - `REBUTTAL`
+  - `CROSS_EXAM`（可选阶段）
+  - `CLOSING`
+  - `CLOSED`
+  - `ABORTED`（长期无进展/手动终止，可选）
 
-复用现有 `DebateRole` + `DebateTurn`，但需要补充字段或规范字段含义：
+### 2.2 发言调度（按阶段 + 槽位推进，允许跳过）
 
-- `DebateRole.role`：固定为 `PRO_1|PRO_2|PRO_3|CON_1|CON_2|CON_3`
-- `DebateTurn.type`：扩展为
-  - `OPENING|REBUTTAL|CROSS_Q|CROSS_A|CLOSING|SYSTEM_SUMMARY`
-- `DebateTurn` 建议新增：
-  - `seq Int`：全局顺序号，避免仅靠 `round` 推断顺序（现有 `round` 难以表达阶段+问答轮）
-  - `meta Json?`：存储问答轮次（1..5）、先手、被问者等
+按阶段定义“期望槽位”：
+- `OPENING`：`PRO_1` → `CON_1`
+- `REBUTTAL`：`PRO_2` → `CON_2`
+- `CROSS_EXAM`（若触发）：5 轮，每轮 `Q` + `A`，参与者固定 `PRO_2` vs `CON_2`，先手随机并持久化，之后交替
+- `CLOSING`：`PRO_3` → `CON_3`
 
-### 3.2 投票事件流与快照
+生成失败策略（防卡死）：
+- token 不可用 / 上游失败：该槽位写入一条 `DebateTurn` 的“SKIPPED/ERROR”占位（或直接跳过，但必须推进 seq/nextTurnAt），保证状态机前进。
 
-新增两张表（建议）：
+### 2.3 随机性的持久化（可测开关）
+
+- 奇袭是否触发（50%）与先手选择必须写库（否则多次推进会出现“同一场有时触发有时不触发”）。
+- 建议字段：
+  - `DebateSession.crossExamEnabled boolean`
+  - `DebateSession.crossExamFirstSide enum(PRO|CON)`
+- 同时提供配置开关（便于验收测试）：
+  - `CROSS_EXAM_FORCE=on|off|random`
+
+---
+
+## 3. Prisma 数据模型（最小可落地 + 可扩展）
+
+核心思路：新增 `DebateSession`，并把“角色/回合/投票”全部从 `Question` 迁移到“按 Session 归属”。
+
+### 3.1 DebateSession（同题多场）
+
+建议新增表：`DebateSession`
+- `id`
+- `questionId`
+- `initiatorUserId`
+- `status`
+- `nextTurnAt`
+- `seq`（下一条 turn 的全局序号）
+- `crossExamEnabled`, `crossExamFirstSide`
+- `createdAt`, `closedAt`, `abortedAt`
+
+唯一约束：
+- `@@unique([questionId, initiatorUserId])`（同一用户对同一题只能发起一次）
+
+### 3.2 席位表（Seat 唯一，允许克隆）
+
+用“席位唯一”替代当前 `DebateRole` 的“participant 唯一”约束。
+
+建议新增表：`DebateSeat`
+- `id`
+- `sessionId`
+- `seat`：`PRO_1|PRO_2|PRO_3|CON_1|CON_2|CON_3`
+- `participantId`（允许重复出现，实现克隆补位）
+- 可选：`seedPersona` / `styleHints`（用于 prompt 差异化）
+
+唯一约束：
+- `@@unique([sessionId, seat])`
+
+### 3.3 DebateTurn（时间线）
+
+建议让 `DebateTurn` 归属 session，并强化可排序：
+- `sessionId`
+- `seq Int`（全局序号）
+- `type`：`OPENING|REBUTTAL|CROSS_Q|CROSS_A|CLOSING|SYSTEM_SUMMARY|SKIPPED|ERROR`
+- `speakerSeat`（如 `PRO_2`）
+- `speakerParticipantId`
+- `content Text`
+- `meta Json?`（问答轮次、先手、异常信息等）
+
+唯一约束：
+- `@@unique([sessionId, seq])`
+
+### 3.4 观众投票（事件流 + 快照，按 Session）
 
 1) `AudienceVoteEvent`
-- `id, questionId, userId, position (PRO/CON), createdAt`
-- 可选字段：`phase`（OPENING/REBUTTAL/...）、`clientSessionId`（排查用）、`ipHash`（可选）
+- `id, sessionId, userId, position(PRO/CON), createdAt`
+- 可选：`phase`, `clientSessionId`, `ipHash`
 
 2) `AudienceVoteSnapshot`
-- `questionId, userId` 唯一
-- `openingPosition`（开场立场）
-- `currentPosition`（当前立场）
-- `openedAt`（确认开场立场时间）
-- `updatedAt`
+- `@@unique([sessionId, userId])`
+- `openingPosition`
+- `currentPosition`
+- `openedAt`, `updatedAt`
 
-“摇摆”统计使用 `openingPosition` vs `currentPosition`（在 `CLOSED` 时刻冻结/读取）。
+### 3.5 MVP（可选，按 Session）
 
-### 3.3 MVP 投票
+`MvpVote`
+- `@@unique([sessionId, userId])`
+- `pickedSeat` 或 `pickedParticipantId`
 
-新增 `MvpVote`
-- `questionId, userId` 唯一
-- `participantId`（所选 MVP）
-- `createdAt`
+### 3.6 积分榜（可选）
 
-### 3.4 积分与战绩
-
-两种实现路径（二选一，首版建议选 A）：
-
-- A. 冗余字段（简单好查榜）
-  - `Participant` 新增：`points Int @default(0)`, `wins Int @default(0)`, `losses Int @default(0)`, `mvpCount Int @default(0)`
-  - 每场结算时直接更新这些字段
-- B. 全事件化（可审计）
-  - 新增 `ScoreEvent`（胜负/MVP/参与分），排行榜从事件聚合得到
+- 首版建议用事件化 `ScoreEvent`，避免重复结算与幂等困难；
+- 或 Participant 冗余字段也可，但必须有“session 结算幂等”标记（如 `DebateSession.settledAt` + `winnerSide`）。
 
 ---
 
-## 4. API 设计（建议落到“公开读 + 登录写 + 内部推进”）
+## 4. API 设计（公开读 + 登录写 + 内部推进）
 
 ### 4.1 公开读
 
-- `GET /api/question/:id`
-  - 返回：题目内容、阶段状态、参赛者信息、当前正反人数（从 `AudienceVoteSnapshot` 聚合）、时间线摘要入口
-- `GET /api/question/:id/timeline`
-  - 返回：所有 `DebateTurn`（含 type/seq/createdAt）、奇袭是否触发、当前阶段等
-- `GET /api/leaderboard`
-  - 返回：积分总榜（`Participant.points` 或聚合结果）
+- `GET /api/question/:id/sessions`
+  - 返回：该题下的 session 列表（initiator、status、createdAt、当前投票统计、是否已结束、winner）
+- `GET /api/session/:id`
+  - 返回：session 基本信息 + 6 席位 + 当前阶段 + 投票统计
+- `GET /api/session/:id/timeline`
+  - 返回：所有 `DebateTurn`（按 seq 升序）
 
-### 4.2 登录写（围观者）
+### 4.2 登录写（发起/投票）
 
-- `POST /api/question/:id/opening`
-  - 用于“开场立场确认”（写 `AudienceVoteSnapshot.openingPosition` + 追加 `AudienceVoteEvent`）
-- `POST /api/question/:id/vote`
-  - 更新当前立场：追加 `AudienceVoteEvent` + 更新 `AudienceVoteSnapshot.currentPosition`
-- `POST /api/question/:id/mvp`
-  - 提交 MVP：写 `MvpVote`（唯一约束防重复）
+- `POST /api/question/:id/session`
+  - 发起 session（服务端 enforce：同题同用户仅一次；并完成 RECRUITING/分配席位）
+- `POST /api/session/:id/opening`
+  - 写 `openingPosition`（若已有 openingPosition 则幂等或直接报错，二选一）
+- `POST /api/session/:id/vote`
+  - 追加 `AudienceVoteEvent` + 更新 `AudienceVoteSnapshot.currentPosition`
+- `POST /api/session/:id/mvp`（可选）
 
-### 4.3 内部写（调度）
+### 4.3 内部推进（鉴权）
 
 - `POST /api/internal/debate/heartbeat`
   - cron secret 鉴权
-  - 推进：招募 → 开篇 → 驳论 →（奇袭）→ 结辩 → 关闭 → 总结
+  - 推进：扫描 `DebateSession`（`status != CLOSED` 且 `nextTurnAt <= now`），逐条推进发言槽位并写 turn
 
-迁移建议：现有 `/api/cron/heartbeat` 改为内部接口并加鉴权；前端不再周期调用（TECH3 已指出必须修）。
+迁移建议：
+- 移除前端对 `/api/cron/heartbeat` 的周期触发；只保留 Vercel Cron / server-side 定时推进（且必须鉴权）。
 
 ---
 
-## 5. 辩手招募与分配（Recruiting）
+## 5. 招募与席位分配（Recruiting）
 
-### 5.1 输入
+输入：
+- `questionId`
+- `initiatorUserId`
 
-- 发起辩论时：`invitedParticipantIds?: string[]`（0~6）
-
-### 5.2 补位规则
-
-1) 点名列表去重、过滤掉“发起者自己的分身”（避嫌）
-2) 从全局 `Participant` 池补齐到 6（首版可随机；后续可按活跃度/冷却/偏好）
-3) 检查 token 可用性：优先只挑“有可用 token”的人进入 6 人名单，减少缺位；仍缺则允许进入但发言时会被跳过
-4) 随机分配阵营与辩位：洗牌后前 3 人为 PRO、后 3 人为 CON；各阵营内再洗牌分配 1/2/3 辩
-5) 写入 `DebateRole` 并把 `Question.status` 置为 `OPENING`
+规则：
+1) 候选池 = `Participant` 中“可用 token”的用户分身（DB 中存在对应 `User` accessToken），并排除 initiator 自己的 `Participant`
+2) 若候选池为空：拒绝开赛或保持 `RECRUITING`（产品需给出明确提示）
+3) 席位填充：
+   - 先从候选池随机抽取（不重复）直到耗尽或席位填满
+   - 不足席位时，允许“带放回抽样”（即克隆补位：重复使用候选 participant 填满 6 个席位）
+4) 阵营与席位分配：
+   - 先决定 6 个 seat（固定集合），再对 seat 列表洗牌并逐个填入 participantId
+5) 创建 `DebateSession` + `DebateSeat[]`，并置 `status=OPENING`，`nextTurnAt=now`
 
 ---
 
 ## 6. 生成与上下文（A2A 质量与成本控制）
 
-### 6.1 上下文可见范围（对齐规则.md）
-
+上下文可见范围（建议）：
 - 2 辩能看到 1 辩内容
 - 3 辩能看到 1、2 辩内容
 - 问答阶段：双方 2 辩看到全部历史 + 本轮问答上下文
-- 上下文除对话外，还应包含：当前正反人数、当前阶段与发言槽位
+- 同时可注入“当前投票走势摘要”（可选，避免引导过强）
 
-### 6.2 内容限制（中等长度）
-
-- 立论/驳论/结辩：建议 ≤ 200 中文字
+内容限制（建议）：
+- Opening/Rebuttal/Closing：≤ 200 中文字
 - 问答：问 ≤ 80 字，答 ≤ 150 字
 
-### 6.3 生成失败/跳过
-
-- token 不可用/外部调用失败：该辩手该槽位跳过，但必须继续推进状态机，防止卡死
-
----
-
-## 7. 结算逻辑（胜负、摇摆、MVP、积分）
-
-### 7.1 胜负（MVP 口径：只有 1 个围观者）
-
-- 在 `CLOSED` 时刻读取该用户 `openingPosition` 与 `currentPosition`：
-  - 不变：开场立场方胜
-  - 改变：另一方胜
-
-### 7.2 MVP
-
-- `CLOSED` 后允许提交 `MvpVote`：列出 6 位辩手单选 1 人；仅允许提交一次
-
-### 7.3 积分
-
-- 胜方阵营每人 +5
-- 败方阵营每人 +1
-- MVP 额外 +5（叠加）
+失败策略：
+- 上游调用失败：写 `ERROR` turn（content 为简短占位 + meta 记录错误），并继续推进下一槽位，防卡死。
 
 ---
 
-## 8. 关键兜底（避免卡死与“不完整开赛”）
+## 7. 结算逻辑（胜负、摇摆、MVP/积分可选）
 
-### 8.1 最低开赛门槛（已对齐）
+### 7.1 胜负（摇摆）
 
-- 允许最少 2 位有效辩手开赛。
+在 `DebateSession.status=CLOSED` 时刻结算：
+- 读取所有 `AudienceVoteSnapshot`（仅统计 `openingPosition != null` 的用户）
+- 计算 opening 与 final 的正方人数，得到 `netSwing`
+- 写入 `DebateSession.winnerSide`（`PRO|CON|DRAW`）
 
-### 8.2 建议的“合理性兜底”（为了产品体验，可做成开关）
+### 7.2 MVP（可选）
 
-- 若正反任一方为 0 人：不进入辩论，保持 `RECRUITING` 并提示“阵营人数不足”，或强制再补位（优先有 token）
+- 仅在 `CLOSED` 后允许提交
+- `@@unique([sessionId, userId])` 防重复
+
+### 7.3 积分（可选）
+
+如启用积分：
+- 胜方席位 participant +5，败方 +1
+- MVP 额外 +5
+- 必须保证结算幂等（`settledAt` 或 `ScoreEvent`）
 
 ---
 
-## 9. 测试与验收（MVP 口径）
+## 8. 关键兜底（避免卡死与不完整开赛）
 
-### 9.1 关键用例
+- 最低开赛门槛（建议）：候选池至少 1 人（允许全程克隆补位），但更推荐至少 2 人避免“单人自辩”观感。
+- 若正反任一方在分配后全部为同一 participant（极端克隆）：允许，但可加开关禁止（产品体验开关）。
 
-1) 招募：点名 0/3/6 人，系统补齐到 6；避嫌过滤生效
-2) 调度：`OPENING -> REBUTTAL -> (CROSS_EXAM?) -> CLOSING -> CLOSED` 全链路不卡死
-3) 奇袭：50% 触发（可通过种子/开关做可测）且 5 轮问答顺序正确（随机先手、交替）
-4) 投票：登录用户可实时切换，事件追加 + 快照更新正确
-5) 胜负：1 人围观时，开场 vs 终态结算正确
-6) MVP：结辩后可投 1 次，唯一约束生效
-7) 积分：胜负/MVP 结算后，参与者积分与榜单正确更新
-8) 安全：`/api/internal/debate/heartbeat` 必须鉴权；前端不可直接触发内部推进
+---
+
+## 9. 安全与可运营
+
+- 内部推进接口必须鉴权（cron secret）。
+- 投票接口必须登录鉴权。
+- 需要基础限流（同一用户对同一 session 的投票切换频率限制，防刷）。
 
 ---
 
 ## 10. 分阶段落地顺序（建议）
 
-1) 修复鉴权与卡死风险（TECH3：heartbeat/poll 鉴权 + DebateEngine 不因缺人卡死）
-2) 赛制状态机改造（阶段化 + 槽位推进 + 50% 奇袭问答）
-3) 投票事件流与开场立场（opening vs current）
-4) 结算（摇摆胜负）+ MVP 投票
-5) 积分与排行榜（Participant 冗余字段或 ScoreEvent）
-6) 系统总结（AI 裁判仅总结）
+1) Session 数据模型落地（DebateSession/Seat/Turn/VoteSnapshot），并迁移现有 DebateEngine 逻辑到“按 session 推进”
+2) 彻底移除前端触发 `/api/cron/heartbeat`，改为内部 cron + secret
+3) 赛制状态机阶段化（Opening/Rebuttal/CrossExam/Closing），并持久化随机性 + 可测开关
+4) 观众投票（opening vs current，实时切换）+ 胜负结算（netSwing）
+5) MVP/积分榜（可选）
+
+## 11. 测试与验收（MVP 口径）
+
+1) 同题多场：同一 `Question` 下不同用户均可创建 `DebateSession`
+2) 唯一约束：同一用户对同一 `Question` 只能创建 1 场（`@@unique([questionId, initiatorUserId])` 生效）
+3) 招募：发起者分身不参赛；候选不足时可克隆补位且席位唯一约束生效（`@@unique([sessionId, seat])`）
+4) 调度：`OPENING -> REBUTTAL -> (CROSS_EXAM?) -> CLOSING -> CLOSED` 全链路不卡死（失败写 `ERROR/SKIPPED` 也要推进）
+5) 奇袭：`CROSS_EXAM_FORCE=on|off|random` 行为可控，先手与是否触发可重放一致
+6) 投票：登录用户开场投票写 openingPosition，后续切换只更新 currentPosition；事件流追加正确
+7) 胜负：`netSwing` 结算正确，`winnerSide` 写入 session；并验证平局口径
+8) 安全：内部 heartbeat 必须鉴权；投票必须登录；有基础限流
