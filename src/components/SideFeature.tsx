@@ -168,7 +168,20 @@ function formatQuoteForDisplay(quote: string): string {
 
 export default function PilFeature() {
   const clientTraceId = useMemo(() => crypto.randomUUID().slice(0, 8), []);
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(() => {
+    try {
+      const raw = localStorage.getItem("secondme:userinfo:v1");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { at?: number; value?: UserInfo } | null;
+      if (!parsed?.value) return null;
+      // Client-side cache TTL: 7 days (avatar/name changes are OK to revalidate in background).
+      const at = typeof parsed.at === "number" ? parsed.at : 0;
+      if (at > 0 && Date.now() - at > 7 * 24 * 60 * 60 * 1000) return null;
+      return parsed.value;
+    } catch {
+      return null;
+    }
+  });
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -400,7 +413,13 @@ export default function PilFeature() {
         if (userRet.status !== 401 && userData?.code !== 401 && userData?.code === 0 && userData?.data) {
           const name = userData.data.name || userData.data.nickname || "我";
           const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
-          setUserInfo({ name, avatarUrl });
+          const next: UserInfo = { name, avatarUrl };
+          setUserInfo(next);
+          try {
+            localStorage.setItem("secondme:userinfo:v1", JSON.stringify({ at: Date.now(), value: next }));
+          } catch {
+            // ignore
+          }
         }
       } catch (error) {
         console.error("Failed to fetch user info", error);
