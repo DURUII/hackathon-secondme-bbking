@@ -168,20 +168,25 @@ function formatQuoteForDisplay(quote: string): string {
 
 export default function PilFeature() {
   const clientTraceId = useMemo(() => crypto.randomUUID().slice(0, 8), []);
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(() => {
+  // NOTE: localStorage access is deferred to useEffect to avoid SSR hydration mismatch.
+  // The initial render will show null/fallback, then hydrate from storage on the client.
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [cachedUserInfoRaw, setCachedUserInfoRaw] = useState<string | null>(null);
+  // Hydrate userInfo from localStorage on mount (avoid SSR hydration mismatch)
+  useEffect(() => {
     try {
       const raw = localStorage.getItem("secondme:userinfo:v1");
-      if (!raw) return null;
+      if (!raw) return;
       const parsed = JSON.parse(raw) as { at?: number; value?: UserInfo } | null;
-      if (!parsed?.value) return null;
+      if (!parsed?.value) return;
       // Client-side cache TTL: 7 days (avatar/name changes are OK to revalidate in background).
       const at = typeof parsed.at === "number" ? parsed.at : 0;
-      if (at > 0 && Date.now() - at > 7 * 24 * 60 * 60 * 1000) return null;
-      return parsed.value;
+      if (at > 0 && Date.now() - at > 7 * 24 * 60 * 60 * 1000) return;
+      setUserInfo(parsed.value);
     } catch {
-      return null;
+      // ignore localStorage errors
     }
-  });
+  }, []);
   const [avatarReady, setAvatarReady] = useState(false);
   const avatarImgRef = useRef<HTMLImageElement | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);

@@ -1,8 +1,5 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { QuestionManager } from '@/lib/question-manager';
-import { VoteManager } from '@/lib/vote-manager';
-import { ParticipantManager } from '@/lib/participant-manager';
 import { getReqLogContext, logApiBegin, logApiEnd, logApiError } from "@/lib/obs/server-log";
 
 // Cache goals (per TECH-V0.md):
@@ -18,6 +15,226 @@ let feedInFlight: Promise<unknown> | null = null;
 
 function cacheControlValue() {
   return `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`;
+}
+
+interface DbQuestion {
+  id: string;
+  userId: string | null;
+  content: string;
+  arenaType: string;
+  status: string;
+  createdAt: Date;
+  votes: Array<{
+    id: string;
+    participantId: string | null;
+    position: number;
+    comment: string;
+  }>;
+}
+
+interface DbParticipant {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  interests?: string[] | null;
+  secondmeId?: string;
+}
+
+interface FeedItemData {
+  id: string;
+  creatorUserId: string | null;
+  userInfo: { name: string; avatarUrl: string };
+  timeAgo: string;
+  content: string;
+  arenaType: string;
+  status: string;
+  redVotes: number;
+  blueVotes: number;
+  redRatio: number;
+  blueRatio: number;
+  commentCount: number;
+  debateTurns: Array<unknown>;
+  previewComments: Array<{
+    id: string;
+    name: string;
+    avatarUrl?: string;
+    content: string;
+    side: "red" | "blue";
+    tags?: string[];
+  }>;
+  structuredComments: Array<{
+    id: string;
+    name: string;
+    avatarUrl?: string;
+    content: string;
+    side: "red" | "blue";
+    tags?: string[];
+  }>;
+  fullComments: { red: string[]; blue: string[] };
+}
+
+/**
+ * Build feed items from database results.
+ * Extracted to avoid code duplication between cache miss and background refresh paths.
+ */
+function buildFeedItems(
+  questions: DbQuestion[],
+  voteParticipants: DbParticipant[],
+  creators: Array<{ id: string; secondmeUserId: string | null }>,
+  creatorParticipants: DbParticipant[]
+): FeedItemData[] {
+  const participantById = new Map(voteParticipants.map((p) => [p.id, p]));
+  const creatorByUserId = new Map(creators.map((u) => [u.id, u]));
+  const creatorParticipantBySecondmeId = new Map(creatorParticipants.map((p) => [p.secondmeId!, p]));
+
+  return questions.map((q) => {
+    const totalVotes = q.votes.length;
+    const redVotes = q.votes.filter((v) => v.position === 1).length;
+    const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5;
+    const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0.5;
+    const blueVotes = totalVotes - redVotes;
+
+    const redComments = q.votes.filter((v) => v.position === 1).map((v) => v.comment);
+    const blueComments = q.votes.filter((v) => v.position === -1).map((v) => v.comment);
+
+    const previewComments = q.votes.slice(0, 2).map((v) => {
+      const p = v.participantId ? participantById.get(v.participantId) : null;
+      return {
+        id: v.id,
+        name: p?.name || "匿名分身",
+        avatarUrl: p?.avatarUrl || undefined,
+        content: v.comment,
+        side: v.position === 1 ? ("red" as const) : ("blue" as const),
+        tags: p?.interests || [],
+      };
+    });
+
+    const structuredComments = q.votes.map((v) => {
+      const p = v.participantId ? participantById.get(v.participantId) : null;
+      return {
+        id: v.id,
+        name: p?.name || "匿名分身",
+        avatarUrl: p?.avatarUrl || undefined,
+        content: v.comment,
+        side: v.position === 1 ? ("red" as const) : ("blue" as const),
+        tags: p?.interests || [],
+      };
+    });
+
+    let creatorName = "社区精选";
+    let creatorAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
+
+    if (q.userId) {
+      const user = creatorByUserId.get(q.userId);
+      if (user?.secondmeUserId) {
+        const participant = creatorParticipantBySecondmeId.get(user.secondmeUserId);
+        if (participant) {
+          creatorName = participant.name;
+          creatorAvatar = participant.avatarUrl || `https://api.dicebear.com/7.x/notionists/svg?seed=${participant.id}`;
+        }
+      }
+    }
+
+    return {
+      id: q.id,
+      creatorUserId: q.userId,
+      userInfo: { name: creatorName, avatarUrl: creatorAvatar },
+      timeAgo: new Date(q.createdAt).toLocaleString("zh-CN", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      content: q.content,
+      arenaType: q.arenaType,
+      status: q.status,
+      redVotes,
+      blueVotes,
+      redRatio,
+      blueRatio,
+      commentCount: totalVotes,
+      debateTurns: [],
+      previewComments,
+      structuredComments,
+      fullComments: { red: redComments, blue: blueComments },
+    };
+  });
+}
+
+/**
+ * Fetch fresh feed data from database.
+ * Returns { payload, etag } on success, or throws on failure.
+ */
+async function fetchFreshFeedData(): Promise<{ payload: { success: true; data: FeedItemData[]; stats: { totalParticipants: number; totalQuestions: number } }; etag: string }> {
+  // 1. Fetch questions
+  const [questions, totalParticipants, totalQuestions] = await Promise.all([
+    db.question.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      include: {
+        votes: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            participantId: true,
+            position: true,
+            comment: true,
+          },
+        },
+      },
+      take: 20,
+    }),
+    db.participant.count(),
+    db.question.count({ where: { deletedAt: null } }),
+  ]);
+
+  // 2. Prefetch related entities in batch to avoid N+1 query latency.
+  const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
+  const voteParticipantIds = Array.from(
+    new Set(questions.flatMap((q) => q.votes.map((v) => v.participantId)).filter(Boolean) as string[])
+  );
+
+  const [voteParticipants, creators] = await Promise.all([
+    voteParticipantIds.length
+      ? db.participant.findMany({
+          where: { id: { in: voteParticipantIds } },
+          select: { id: true, name: true, avatarUrl: true, interests: true },
+        })
+      : Promise.resolve([]),
+    creatorUserIds.length
+      ? db.user.findMany({
+          where: { id: { in: creatorUserIds } },
+          select: { id: true, secondmeUserId: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const creatorSecondMeIds = Array.from(new Set(creators.map((u) => u.secondmeUserId).filter(Boolean) as string[]));
+  const creatorParticipants = creatorSecondMeIds.length
+    ? await db.participant.findMany({
+        where: { secondmeId: { in: creatorSecondMeIds } },
+        select: { secondmeId: true, name: true, avatarUrl: true, id: true },
+      })
+    : [];
+
+  // 3. Transform to Feed format
+  const feedItems = buildFeedItems(questions, voteParticipants, creators, creatorParticipants);
+
+  const payload = {
+    success: true,
+    data: feedItems,
+    stats: { totalParticipants, totalQuestions },
+  } as const;
+
+  // Compute a cheap weak ETag based on "most recent activity"
+  let maxTs = 0;
+  for (const q of questions) {
+    const qTs = q.createdAt instanceof Date ? q.createdAt.getTime() : 0;
+    if (qTs > maxTs) maxTs = qTs;
+  }
+  const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
+
+  return { payload, etag };
 }
 
 function buildFallbackFeedPayload() {
@@ -162,165 +379,11 @@ export async function GET(req: Request) {
       });
     }
 
-    // Stale-while-revalidate: if we have a stale cache, return it immediately and refresh in background.
-    // This avoids "slow 304" where we wait on DB just to confirm nothing changed.
+    // Stale-while-revalidate: if we have a stale cache, return it immediately.
+    // NOTE: Background refresh is disabled in serverless environments (Vercel) because
+    // the async Promise may not complete before the function terminates.
+    // Clients will receive stale data until the next request triggers a fresh fetch.
     if (cache && isStaleOk) {
-      if (!feedInFlight) {
-        const p = (async () => {
-          // Force refresh (same body as miss path).
-          try {
-            // 1. Fetch questions
-            const [questions, totalParticipants, totalQuestions] = await Promise.all([
-              db.question.findMany({
-                where: { deletedAt: null },
-                orderBy: { createdAt: "desc" },
-                include: {
-                  votes: {
-                    orderBy: { createdAt: "asc" },
-                    select: {
-                      id: true,
-                      participantId: true,
-                      position: true,
-                      comment: true,
-                    },
-                  },
-                },
-                take: 20,
-              }),
-              db.participant.count(),
-              db.question.count({ where: { deletedAt: null } }),
-            ]);
-
-          const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
-          const voteParticipantIds = Array.from(
-            new Set(questions.flatMap((q) => q.votes.map((v) => v.participantId)).filter(Boolean) as string[])
-          );
-
-          const [voteParticipants, creators] = await Promise.all([
-            voteParticipantIds.length
-              ? db.participant.findMany({
-                  where: { id: { in: voteParticipantIds } },
-                  select: { id: true, name: true, avatarUrl: true, interests: true },
-                })
-              : Promise.resolve([]),
-            creatorUserIds.length
-              ? db.user.findMany({
-                  where: { id: { in: creatorUserIds } },
-                  select: { id: true, secondmeUserId: true },
-                })
-              : Promise.resolve([]),
-          ]);
-
-          const creatorSecondMeIds = Array.from(new Set(creators.map((u) => u.secondmeUserId)));
-          const creatorParticipants = creatorSecondMeIds.length
-            ? await db.participant.findMany({
-                where: { secondmeId: { in: creatorSecondMeIds } },
-                select: { secondmeId: true, name: true, avatarUrl: true, id: true },
-              })
-            : [];
-
-          const participantById = new Map(voteParticipants.map((p) => [p.id, p]));
-          const creatorByUserId = new Map(creators.map((u) => [u.id, u]));
-          const creatorParticipantBySecondmeId = new Map(creatorParticipants.map((p) => [p.secondmeId, p]));
-
-          const feedItems = questions.map((q) => {
-            const totalVotes = q.votes.length;
-            const redVotes = q.votes.filter((v) => v.position === 1).length;
-            const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5;
-            const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0.5;
-            const blueVotes = totalVotes - redVotes;
-
-            const redComments = q.votes.filter((v) => v.position === 1).map((v) => v.comment);
-            const blueComments = q.votes.filter((v) => v.position === -1).map((v) => v.comment);
-
-            const previewComments = q.votes.slice(0, 2).map((v) => {
-              const p = v.participantId ? participantById.get(v.participantId) : null;
-              return {
-                id: v.id,
-                name: p?.name || "匿名分身",
-                avatarUrl: p?.avatarUrl,
-                content: v.comment,
-                side: v.position === 1 ? ("red" as const) : ("blue" as const),
-                tags: p?.interests || [],
-              };
-            });
-
-            const structuredComments = q.votes.map((v) => {
-              const p = v.participantId ? participantById.get(v.participantId) : null;
-              return {
-                id: v.id,
-                name: p?.name || "匿名分身",
-                avatarUrl: p?.avatarUrl,
-                content: v.comment,
-                side: v.position === 1 ? ("red" as const) : ("blue" as const),
-                tags: p?.interests || [],
-              };
-            });
-
-            let creatorName = "社区精选";
-            let creatorAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
-
-            if (q.userId) {
-              const user = creatorByUserId.get(q.userId);
-              if (user?.secondmeUserId) {
-                const participant = creatorParticipantBySecondmeId.get(user.secondmeUserId);
-                if (participant) {
-                  creatorName = participant.name;
-                  creatorAvatar = participant.avatarUrl || `https://api.dicebear.com/7.x/notionists/svg?seed=${participant.id}`;
-                }
-              }
-            }
-
-            return {
-              id: q.id,
-              creatorUserId: q.userId,
-              userInfo: { name: creatorName, avatarUrl: creatorAvatar },
-              timeAgo: new Date(q.createdAt).toLocaleString("zh-CN", {
-                month: "numeric",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-              content: q.content,
-              arenaType: q.arenaType,
-              status: q.status,
-              redVotes,
-              blueVotes,
-              redRatio,
-              blueRatio,
-              commentCount: totalVotes,
-              debateTurns: [],
-              previewComments,
-              structuredComments,
-              fullComments: { red: redComments, blue: blueComments },
-            };
-          });
-
-          const payload = {
-            success: true,
-            data: feedItems,
-            stats: { totalParticipants, totalQuestions },
-          };
-
-          let maxTs = 0;
-          for (const q of questions) {
-            const qTs = q.createdAt instanceof Date ? q.createdAt.getTime() : 0;
-            if (qTs > maxTs) maxTs = qTs;
-          }
-          const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
-          feedCache = { at: Date.now(), payload, etag };
-          return payload;
-          } catch (err) {
-            // Background refresh must not crash the handler (and must not trigger unhandled rejections).
-            console.warn("[FEED] Background refresh failed; keeping stale cache:", err);
-            return null;
-          }
-        })();
-        feedInFlight = p.finally(() => {
-          if (feedInFlight === p) feedInFlight = null;
-        });
-      }
-
       if (ifNoneMatch && cache.etag && ifNoneMatch === cache.etag) {
         logApiEnd(ctx, "api.feed", { status: 304, dur_ms: Date.now() - t0, cache: "stale_304" });
         return new Response(null, {
@@ -332,7 +395,6 @@ export async function GET(req: Request) {
           },
         });
       }
-
       logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "stale" });
       return NextResponse.json(cache.payload, {
         headers: {
@@ -343,203 +405,20 @@ export async function GET(req: Request) {
       });
     }
 
-    if (feedInFlight) {
-      const payload = await feedInFlight;
-      const etag = feedCache?.etag || "";
-      if (ifNoneMatch && etag && ifNoneMatch === etag) {
-        logApiEnd(ctx, "api.feed", { status: 304, dur_ms: Date.now() - t0, cache: "wait" });
-        return new Response(null, {
-          status: 304,
-          headers: {
-            etag,
-            "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
-            "x-feed-cache": "wait",
-          },
-        });
-      }
-      logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "wait" });
-      return NextResponse.json(payload, {
-        headers: {
-          etag,
-          "cache-control": cacheControlValue(),
-          "x-feed-cache": "wait",
-        },
-      });
-    }
-
+    // Cache miss: fetch fresh data from database
     const p = (async () => {
-    try {
-      // 1. Fetch questions
-      const [questions, totalParticipants, totalQuestions] = await Promise.all([
-        db.question.findMany({
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-          include: {
-            votes: {
-              orderBy: { createdAt: 'asc' },
-              select: {
-                id: true,
-                participantId: true,
-                position: true,
-                comment: true,
-              },
-            },
-          },
-          take: 20, 
-        }),
-        db.participant.count(),
-        db.question.count({ where: { deletedAt: null } })
-      ]);
-
-    // 2. Prefetch related entities in batch to avoid N+1 query latency.
-    const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
-    const voteParticipantIds = Array.from(
-      new Set(
-        questions
-          .flatMap((q) => q.votes.map((v) => v.participantId))
-          .filter(Boolean) as string[]
-      )
-    );
-
-    const [voteParticipants, creators] = await Promise.all([
-      voteParticipantIds.length
-        ? db.participant.findMany({
-            where: { id: { in: voteParticipantIds } },
-            select: { id: true, name: true, avatarUrl: true, interests: true },
-          })
-        : Promise.resolve([]),
-      creatorUserIds.length
-        ? db.user.findMany({
-            where: { id: { in: creatorUserIds } },
-            select: { id: true, secondmeUserId: true },
-          })
-        : Promise.resolve([]),
-    ]);
-
-    const creatorSecondMeIds = Array.from(new Set(creators.map((u) => u.secondmeUserId)));
-    const creatorParticipants = creatorSecondMeIds.length
-      ? await db.participant.findMany({
-          where: { secondmeId: { in: creatorSecondMeIds } },
-          select: { secondmeId: true, name: true, avatarUrl: true, id: true },
-        })
-      : [];
-
-    const participantById = new Map(voteParticipants.map((p) => [p.id, p]));
-    const creatorByUserId = new Map(creators.map((u) => [u.id, u]));
-    const creatorParticipantBySecondmeId = new Map(creatorParticipants.map((p) => [p.secondmeId, p]));
-
-    // 3. Transform to Feed format
-    const feedItems = questions.map((q) => {
-      // Calculate ratios
-      const totalVotes = q.votes.length;
-      const redVotes = q.votes.filter(v => v.position === 1).length;
-      const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5; // Default 0.5 if no votes
-      const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0.5;
-      const blueVotes = totalVotes - redVotes;
-
-      // Get comments
-      const redComments = q.votes.filter(v => v.position === 1).map(v => v.comment);
-      const blueComments = q.votes.filter(v => v.position === -1).map(v => v.comment);
-
-      // Get preview comments
-      // ... (Existing logic or simplified)
-      const previewComments = q.votes.slice(0, 2).map(v => {
-        const p = v.participantId ? participantById.get(v.participantId) : null;
-        return {
-          id: v.id,
-          name: p?.name || '匿名分身',
-          avatarUrl: p?.avatarUrl,
-          content: v.comment,
-          side: v.position === 1 ? 'red' as const : 'blue' as const,
-          tags: p?.interests || []
-        };
-      });
-
-      // Get all comments structured
-      const structuredComments = q.votes.map(v => {
-        const p = v.participantId ? participantById.get(v.participantId) : null;
-        return {
-          id: v.id,
-          name: p?.name || '匿名分身',
-          avatarUrl: p?.avatarUrl,
-          content: v.comment,
-          side: v.position === 1 ? 'red' as const : 'blue' as const,
-          tags: p?.interests || []
-        };
-      });
-
-      // Get the actual user who created this question
-      let creatorName = "社区精选";
-      let creatorAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
-
-      if (q.userId) {
-        const user = creatorByUserId.get(q.userId);
-        if (user?.secondmeUserId) {
-          const participant = creatorParticipantBySecondmeId.get(user.secondmeUserId);
-          if (participant) {
-            creatorName = participant.name;
-            creatorAvatar = participant.avatarUrl || `https://api.dicebear.com/7.x/notionists/svg?seed=${participant.id}`;
-          }
-        }
+      try {
+        const result = await fetchFreshFeedData();
+        feedCache = { at: Date.now(), payload: result.payload, etag: result.etag };
+        return result.payload;
+      } catch (err) {
+        // Local dev often has DB connectivity issues; keep home usable with preset feed.
+        console.warn("[FEED] DB query failed; falling back to preset feed:", err);
+        const payload = buildFallbackFeedPayload();
+        const etag = `W/"feed-fallback-${PRESET_QUESTIONS.length}"`;
+        feedCache = { at: Date.now(), payload, etag };
+        return payload;
       }
-
-      return {
-        id: q.id,
-        creatorUserId: q.userId,
-        userInfo: {
-          name: creatorName,
-          avatarUrl: creatorAvatar,
-        },
-        timeAgo: new Date(q.createdAt).toLocaleString('zh-CN', {
-          month: 'numeric',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
-        content: q.content,
-        arenaType: q.arenaType,
-        status: q.status,
-        redVotes,
-        blueVotes,
-        redRatio,
-        blueRatio,
-        commentCount: totalVotes,
-        debateTurns: [],
-        previewComments,
-        structuredComments,
-        fullComments: {
-          red: redComments,
-          blue: blueComments
-        }
-      };
-    });
-
-    const payload = {
-      success: true,
-      data: feedItems,
-      stats: {
-        totalParticipants,
-        totalQuestions
-      }
-    };
-    // Compute a cheap weak ETag based on "most recent activity" in the returned window.
-    // This is not a cryptographic hash; it's meant for conditional requests (304) and CDN caching.
-    let maxTs = 0;
-    for (const q of questions) {
-      const qTs = q.createdAt instanceof Date ? q.createdAt.getTime() : 0;
-      if (qTs > maxTs) maxTs = qTs;
-    }
-    const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
-    feedCache = { at: Date.now(), payload, etag };
-    return payload;
-    } catch (err) {
-      // Local dev often has DB connectivity issues; keep home usable with preset feed.
-      console.warn("[FEED] DB query failed; falling back to preset feed:", err);
-      const payload = buildFallbackFeedPayload();
-      const etag = `W/"feed-fallback-${PRESET_QUESTIONS.length}"`;
-      feedCache = { at: Date.now(), payload, etag };
-      return payload;
-    }
     })();
     feedInFlight = p.finally(() => {
       if (feedInFlight === p) feedInFlight = null;
