@@ -5,8 +5,14 @@ import { VoteManager } from '@/lib/vote-manager';
 import { ParticipantManager } from '@/lib/participant-manager';
 import { getReqLogContext, logApiBegin, logApiEnd, logApiError } from "@/lib/obs/server-log";
 
-const FEED_CACHE_TTL_MS = 2000;
-let feedCache: { at: number; payload: unknown } | null = null;
+// Cache goals (per TECH-V0.md):
+// - Avoid hammering DB on home feed polling / burst traffic (TTL + singleflight).
+// - Make caching work across instances by enabling Vercel CDN caching too (s-maxage + SWR).
+const FEED_CACHE_TTL_MS = 10_000;
+const FEED_S_MAXAGE_SEC = 10;
+const FEED_SWR_SEC = 30;
+
+let feedCache: { at: number; payload: unknown; etag: string } | null = null;
 let feedInFlight: Promise<unknown> | null = null;
 
 // Preset questions for seeding
@@ -70,16 +76,52 @@ export async function GET(req: Request) {
   const t0 = Date.now();
   logApiBegin(ctx, "api.feed", {});
   try {
-    const cached = feedCache && Date.now() - feedCache.at < FEED_CACHE_TTL_MS ? feedCache.payload : null;
+    const ifNoneMatch = req.headers.get("if-none-match");
+    const cached = feedCache && Date.now() - feedCache.at < FEED_CACHE_TTL_MS ? feedCache : null;
     if (cached) {
+      if (ifNoneMatch && cached.etag && ifNoneMatch === cached.etag) {
+        logApiEnd(ctx, "api.feed", { status: 304, dur_ms: Date.now() - t0, cache: "hit" });
+        return new Response(null, {
+          status: 304,
+          headers: {
+            etag: cached.etag,
+            "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+            "x-feed-cache": "hit",
+          },
+        });
+      }
       logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "hit" });
-      return NextResponse.json(cached, { headers: { "x-feed-cache": "hit" } });
+      return NextResponse.json(cached.payload, {
+        headers: {
+          etag: cached.etag,
+          "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+          "x-feed-cache": "hit",
+        },
+      });
     }
 
     if (feedInFlight) {
       const payload = await feedInFlight;
+      const etag = feedCache?.etag || "";
+      if (ifNoneMatch && etag && ifNoneMatch === etag) {
+        logApiEnd(ctx, "api.feed", { status: 304, dur_ms: Date.now() - t0, cache: "wait" });
+        return new Response(null, {
+          status: 304,
+          headers: {
+            etag,
+            "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+            "x-feed-cache": "wait",
+          },
+        });
+      }
       logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "wait" });
-      return NextResponse.json(payload, { headers: { "x-feed-cache": "wait" } });
+      return NextResponse.json(payload, {
+        headers: {
+          etag,
+          "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+          "x-feed-cache": "wait",
+        },
+      });
     }
 
     feedInFlight = (async () => {
@@ -236,7 +278,15 @@ export async function GET(req: Request) {
         totalQuestions
       }
     };
-    feedCache = { at: Date.now(), payload };
+    // Compute a cheap weak ETag based on "most recent activity" in the returned window.
+    // This is not a cryptographic hash; it's meant for conditional requests (304) and CDN caching.
+    let maxTs = 0;
+    for (const q of questions) {
+      const qTs = q.createdAt instanceof Date ? q.createdAt.getTime() : 0;
+      if (qTs > maxTs) maxTs = qTs;
+    }
+    const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
+    feedCache = { at: Date.now(), payload, etag };
     return payload;
     })();
 
@@ -246,8 +296,27 @@ export async function GET(req: Request) {
       payload && typeof payload === "object" && "data" in payload && Array.isArray((payload as { data?: unknown }).data)
         ? ((payload as { data: unknown[] }).data.length)
         : undefined;
+    const etag = feedCache?.etag || "";
+    if (ifNoneMatch && etag && ifNoneMatch === etag) {
+      logApiEnd(ctx, "api.feed", { status: 304, dur_ms: durMs, items, cache: "miss_304" });
+      return new Response(null, {
+        status: 304,
+        headers: {
+          etag,
+          "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+          "x-feed-cache": "miss",
+        },
+      });
+    }
+
     logApiEnd(ctx, "api.feed", { status: 200, dur_ms: durMs, items, cache: "miss" });
-    return NextResponse.json(payload, { headers: { "x-feed-cache": "miss" } });
+    return NextResponse.json(payload, {
+      headers: {
+        etag,
+        "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+        "x-feed-cache": "miss",
+      },
+    });
 
   } catch (error) {
     logApiError(ctx, "api.feed", { dur_ms: Date.now() - t0, status: 500 }, error);
