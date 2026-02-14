@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, useLayoutEffect } from "react";
 import { QuestionInput } from "@/components/QuestionInput";
 import { FeedCard } from "@/components/FeedCard";
 import { ArenaDisplay } from "@/components/ArenaDisplay";
@@ -167,7 +167,28 @@ function formatQuoteForDisplay(quote: string): string {
 }
 
 export default function PilFeature() {
+  const clientTraceId = useMemo(() => crypto.randomUUID().slice(0, 8), []);
+  // NOTE: localStorage access is deferred to useEffect to avoid SSR hydration mismatch.
+  // The initial render will show null/fallback, then hydrate from storage on the client.
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [cachedUserInfoRaw, setCachedUserInfoRaw] = useState<string | null>(null);
+  // Hydrate userInfo from localStorage on mount (avoid SSR hydration mismatch)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("secondme:userinfo:v1");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { at?: number; value?: UserInfo } | null;
+      if (!parsed?.value) return;
+      // Client-side cache TTL: 7 days (avatar/name changes are OK to revalidate in background).
+      const at = typeof parsed.at === "number" ? parsed.at : 0;
+      if (at > 0 && Date.now() - at > 7 * 24 * 60 * 60 * 1000) return;
+      setUserInfo(parsed.value);
+    } catch {
+      // ignore localStorage errors
+    }
+  }, []);
+  const [avatarReady, setAvatarReady] = useState(false);
+  const avatarImgRef = useRef<HTMLImageElement | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -185,10 +206,27 @@ export default function PilFeature() {
   const publishInFlightRef = useRef(false);
 
   useEffect(() => {
+    // Reset fade state when avatar changes.
+    setAvatarReady(false);
+  }, [userInfo?.avatarUrl]);
+
+  useLayoutEffect(() => {
+    // Avoid 1-frame "flash" when the browser already has the image cached.
+    const el = avatarImgRef.current;
+    if (!el) return;
+    if (el.complete && el.naturalWidth > 0) {
+      setAvatarReady(true);
+    }
+  }, [userInfo?.avatarUrl]);
+
+  useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const res = await fetch("/qipa-waiting-quotes.csv", { cache: "force-cache" });
+        const res = await fetch("/qipa-waiting-quotes.csv", {
+          cache: "force-cache",
+          headers: { "x-client-trace-id": clientTraceId },
+        });
         if (!res.ok) return;
         const raw = await res.text();
         const parsed = parseWaitingQuotesCsv(raw);
@@ -203,7 +241,7 @@ export default function PilFeature() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [clientTraceId]);
 
   const currentWaitingQuote = useMemo(() => {
     if (!sessionLoading) return null;
@@ -314,7 +352,7 @@ export default function PilFeature() {
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
     try {
-      const res = await fetch("/api/feed");
+      const res = await fetch("/api/feed", { headers: { "x-client-trace-id": clientTraceId } });
       const raw = await res.text();
       let data: unknown = null;
       try {
@@ -354,7 +392,7 @@ export default function PilFeature() {
     } finally {
       setIsLoadingFeed(false);
     }
-  }, []);
+  }, [clientTraceId]);
 
   // NOTE: Debate heartbeat is server-side only (Vercel Cron / internal secret).
 
@@ -385,32 +423,23 @@ export default function PilFeature() {
           }
         };
 
-        const [userRet, regRet] = await Promise.allSettled([
-          fetch("/api/secondme/user/info"),
-          fetch("/api/register", { method: "POST" }),
-        ]);
+        const userRet = await fetch("/api/secondme/user/info", {
+          headers: { "x-client-trace-id": clientTraceId },
+        });
 
-        if (userRet.status === "fulfilled") {
-          const userRaw = await userRet.value.text();
-          const userData = parseJson(userRaw) as
-            | { code?: number; data?: { name?: string; nickname?: string; avatar?: string; avatarUrl?: string } }
-            | null;
-          if (userRet.value.status !== 401 && userData?.code !== 401 && userData?.code === 0 && userData?.data) {
-            const name = userData.data.name || userData.data.nickname || "我";
-            const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
-            setUserInfo({ name, avatarUrl });
-          }
-        }
-
-        if (regRet.status === "fulfilled") {
-          const regRaw = await regRet.value.text();
-          const regData = parseJson(regRaw) as { success?: boolean; data?: { userId?: string } } | null;
-          if (regData?.success) {
-            if (typeof regData.data?.userId === "string") {
-              setCurrentUserId(regData.data.userId);
-            }
-            // Trigger backfill for new/existing participant to vote on recent questions.
-            fetch("/api/backfill", { method: "POST" }).catch(console.error);
+        const userRaw = await userRet.text();
+        const userData = parseJson(userRaw) as
+          | { code?: number; data?: { name?: string; nickname?: string; avatar?: string; avatarUrl?: string } }
+          | null;
+        if (userRet.status !== 401 && userData?.code !== 401 && userData?.code === 0 && userData?.data) {
+          const name = userData.data.name || userData.data.nickname || "我";
+          const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
+          const next: UserInfo = { name, avatarUrl };
+          setUserInfo(next);
+          try {
+            localStorage.setItem("secondme:userinfo:v1", JSON.stringify({ at: Date.now(), value: next }));
+          } catch {
+            // ignore
           }
         }
       } catch (error) {
@@ -418,7 +447,35 @@ export default function PilFeature() {
       }
     }
     fetchUserInfo();
-  }, []);
+  }, [clientTraceId]);
+
+  const ensureRegistered = useCallback(async (): Promise<string | null> => {
+    if (currentUserId) return currentUserId;
+    try {
+      // Use GET /api/register to avoid the heavier "enqueue recent vote tasks" path.
+      const res = await fetch("/api/register", {
+        method: "GET",
+        headers: { "x-client-trace-id": clientTraceId },
+      });
+      if (res.status === 401) return null;
+      const raw = await res.text();
+      let data: unknown = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+      const payload = data as { success?: boolean; data?: { userId?: string } } | null;
+      const userId = payload?.success ? payload?.data?.userId : undefined;
+      if (typeof userId === "string") {
+        setCurrentUserId(userId);
+        return userId;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, [clientTraceId, currentUserId]);
 
   // Removed redundant definition of fetchFeed here (it was moved up)
   // const fetchFeed = useCallback(...) 
@@ -426,7 +483,8 @@ export default function PilFeature() {
   // Initial Fetch moved to up too
 
   const handlePublish = async (data: { content: string }) => {
-    if (!currentUserId) {
+    const userId = await ensureRegistered();
+    if (!userId) {
       window.location.href = "/api/auth/login";
       return;
     }
@@ -444,7 +502,7 @@ export default function PilFeature() {
         name: userInfo?.name || "我",
         avatarUrl: userInfo?.avatarUrl,
       },
-      creatorUserId: currentUserId,
+      creatorUserId: userId,
       timeAgo: "刚刚",
       content: data.content,
       arenaType: "toxic",
@@ -467,7 +525,7 @@ export default function PilFeature() {
       // 2. Call API
       const publishRes = await fetch("/api/publish", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-client-trace-id": clientTraceId },
         body: JSON.stringify(data),
       });
       const publishData = await publishRes.json();
@@ -509,10 +567,10 @@ export default function PilFeature() {
     setExpandedId(itemId);
     fetch("/api/question/view", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-client-trace-id": clientTraceId },
       body: JSON.stringify({ questionId: itemId }),
     }).catch((err) => console.error("Failed to enqueue question view", err));
-  }, []);
+  }, [clientTraceId]);
 
   const filteredFeedItems = feedItems.filter((item) => {
     if (activeTab === "all") return true;
@@ -535,14 +593,34 @@ export default function PilFeature() {
                </span>
              </div>
           </div>
-          <div className="w-9 h-9 rounded-full bg-white/5 border border-white/10 overflow-hidden">
+          <div className="relative w-9 h-9 rounded-full bg-white/5 border border-white/10 overflow-hidden">
+            <div
+              className={[
+                "absolute inset-0 flex items-center justify-center text-white/30",
+                "transition-opacity duration-500 ease-out will-change-[opacity]",
+                userInfo?.avatarUrl && avatarReady ? "opacity-0" : "opacity-100",
+              ].join(" ")}
+              aria-hidden={Boolean(userInfo?.avatarUrl && avatarReady)}
+            >
+              <User className="w-4 h-4" />
+            </div>
             {userInfo?.avatarUrl ? (
-              <img src={userInfo.avatarUrl} alt="User" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-white/30">
-                <User className="w-4 h-4" />
-              </div>
-            )}
+              <img
+                ref={avatarImgRef}
+                src={userInfo.avatarUrl}
+                alt="User"
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+                onLoad={() => setAvatarReady(true)}
+                onError={() => setAvatarReady(false)}
+                className={[
+                  "absolute inset-0 w-full h-full object-cover",
+                  "transition-opacity duration-500 ease-out will-change-[opacity]",
+                  avatarReady ? "opacity-100" : "opacity-0",
+                ].join(" ")}
+              />
+            ) : null}
           </div>
         </div>
       </header>
@@ -568,7 +646,20 @@ export default function PilFeature() {
               ].map((tab) => (
                 <button
                   key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
+                  onClick={async () => {
+                    if (tab.key !== "proposed") {
+                      setActiveTab(tab.key);
+                      return;
+                    }
+
+                    // Proposed tab needs current user id; lazily resolve on first access.
+                    const userId = await ensureRegistered();
+                    if (!userId) {
+                      window.location.href = "/api/auth/login";
+                      return;
+                    }
+                    setActiveTab(tab.key);
+                  }}
                   className={`px-4 py-1.5 text-xs font-bold transition-all rounded-md ${
                     activeTab === tab.key
                       ? "bg-white text-black shadow-sm"

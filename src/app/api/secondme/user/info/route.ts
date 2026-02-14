@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
 import { secondMeFetch } from "@/lib/secondme-server";
 import { readJsonOrText } from "@/lib/secondme-http";
-import { db } from "@/lib/db";
-import { getSecondMeAccessToken } from "@/lib/secondme-server";
+import { getReqLogContext, logApiBegin, logApiEnd } from "@/lib/obs/server-log";
 
-export async function GET() {
-  const requestId = crypto.randomUUID().slice(0, 8);
-  const logPrefix = `[SecondMe Proxy UserInfo][${requestId}]`;
-  console.log(`${logPrefix} BEGIN`, { stage: "begin" });
+export async function GET(req: Request) {
+  const ctx = getReqLogContext(req);
+  const t0 = Date.now();
+  logApiBegin(ctx, "api.secondme_user_info", {});
 
   const result = await secondMeFetch("/api/secondme/user/info");
   if (!result.hasAuth) {
-    console.warn(`${logPrefix} END`, { stage: "unauthorized", status: result.status });
+    logApiEnd(ctx, "api.secondme_user_info", { status: result.status, dur_ms: Date.now() - t0, stage: "unauthorized" });
     return NextResponse.json(result.error, { status: result.status });
   }
 
@@ -32,54 +31,12 @@ export async function GET() {
       ? (parsed as UserInfoResponse)
       : undefined;
 
-  // --- Auto-Sync User to Database ---
-  const userInfo = json?.data;
-  const secondmeUserId = userInfo?.id ?? userInfo?.userId;
-  if (result.ok && secondmeUserId && userInfo) {
-      try {
-          const accessToken = await getSecondMeAccessToken();
-          const normalizedSecondmeUserId = String(secondmeUserId);
-          
-          if (accessToken) {
-              await db.user.upsert({
-                  where: { secondmeUserId: normalizedSecondmeUserId },
-                  update: {
-                      accessToken: accessToken,
-                      tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Refresh expiry
-                  },
-                  create: {
-                      secondmeUserId: normalizedSecondmeUserId,
-                      accessToken: accessToken,
-                      refreshToken: "", // We don't have refresh token here, but that's fine
-                      tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-                  }
-              });
-              
-              // Also sync Participant
-              await db.participant.upsert({
-                  where: { secondmeId: normalizedSecondmeUserId },
-                  update: {
-                      lastActiveAt: new Date(),
-                      name: userInfo.name || userInfo.nickname || '用户',
-                      avatarUrl: userInfo.avatar || userInfo.avatarUrl,
-                      isActive: true
-                  },
-                  create: {
-                      secondmeId: normalizedSecondmeUserId,
-                      name: userInfo.name || userInfo.nickname || '用户',
-                      avatarUrl: userInfo.avatar || userInfo.avatarUrl,
-                      isActive: true
-                  }
-              });
-              
-              console.log(`${logPrefix} SYNC`, { success: true, secondmeUserId: normalizedSecondmeUserId });
-          }
-      } catch (e) {
-          console.error(`${logPrefix} SYNC_ERROR`, e);
-      }
-  }
-  // ----------------------------------
+  // Note: avoid DB writes here; keep this endpoint as a fast read proxy.
 
-  console.log(`${logPrefix} END`, { stage: result.ok ? "success" : "upstream_failed", status: result.status });
+  logApiEnd(ctx, "api.secondme_user_info", {
+    status: result.status,
+    dur_ms: Date.now() - t0,
+    stage: result.ok ? "success" : "upstream_failed",
+  });
   return NextResponse.json(json ?? { code: result.status, message: "Empty response", data: null }, { status: result.status });
 }
