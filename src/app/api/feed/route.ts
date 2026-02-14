@@ -11,9 +11,14 @@ import { getReqLogContext, logApiBegin, logApiEnd, logApiError } from "@/lib/obs
 const FEED_CACHE_TTL_MS = 10_000;
 const FEED_S_MAXAGE_SEC = 10;
 const FEED_SWR_SEC = 30;
+const FEED_STALE_OK_MS = FEED_SWR_SEC * 1000;
 
 let feedCache: { at: number; payload: unknown; etag: string } | null = null;
 let feedInFlight: Promise<unknown> | null = null;
+
+function cacheControlValue() {
+  return `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`;
+}
 
 // Preset questions for seeding
 const PRESET_QUESTIONS = [
@@ -77,25 +82,205 @@ export async function GET(req: Request) {
   logApiBegin(ctx, "api.feed", {});
   try {
     const ifNoneMatch = req.headers.get("if-none-match");
-    const cached = feedCache && Date.now() - feedCache.at < FEED_CACHE_TTL_MS ? feedCache : null;
-    if (cached) {
-      if (ifNoneMatch && cached.etag && ifNoneMatch === cached.etag) {
-        logApiEnd(ctx, "api.feed", { status: 304, dur_ms: Date.now() - t0, cache: "hit" });
+    const now = Date.now();
+    const cache = feedCache;
+    const ageMs = cache ? now - cache.at : Number.POSITIVE_INFINITY;
+    const isFresh = Boolean(cache && ageMs < FEED_CACHE_TTL_MS);
+    const isStaleOk = Boolean(cache && ageMs < FEED_CACHE_TTL_MS + FEED_STALE_OK_MS);
+
+    if (cache && isFresh) {
+      if (ifNoneMatch && cache.etag && ifNoneMatch === cache.etag) {
+        logApiEnd(ctx, "api.feed", { status: 304, dur_ms: now - t0, cache: "hit" });
         return new Response(null, {
           status: 304,
           headers: {
-            etag: cached.etag,
-            "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+            etag: cache.etag,
+            "cache-control": cacheControlValue(),
             "x-feed-cache": "hit",
           },
         });
       }
-      logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "hit" });
-      return NextResponse.json(cached.payload, {
+      logApiEnd(ctx, "api.feed", { status: 200, dur_ms: now - t0, cache: "hit" });
+      return NextResponse.json(cache.payload, {
         headers: {
-          etag: cached.etag,
-          "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+          etag: cache.etag,
+          "cache-control": cacheControlValue(),
           "x-feed-cache": "hit",
+        },
+      });
+    }
+
+    // Stale-while-revalidate: if we have a stale cache, return it immediately and refresh in background.
+    // This avoids "slow 304" where we wait on DB just to confirm nothing changed.
+    if (cache && isStaleOk) {
+      if (!feedInFlight) {
+        const p = (async () => {
+          // Force refresh (same body as miss path).
+          // 1. Fetch questions
+          const [questions, totalParticipants, totalQuestions] = await Promise.all([
+            db.question.findMany({
+              where: { deletedAt: null },
+              orderBy: { createdAt: "desc" },
+              include: {
+                votes: {
+                  orderBy: { createdAt: "asc" },
+                  select: {
+                    id: true,
+                    participantId: true,
+                    position: true,
+                    comment: true,
+                  },
+                },
+              },
+              take: 20,
+            }),
+            db.participant.count(),
+            db.question.count({ where: { deletedAt: null } }),
+          ]);
+
+          const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
+          const voteParticipantIds = Array.from(
+            new Set(questions.flatMap((q) => q.votes.map((v) => v.participantId)).filter(Boolean) as string[])
+          );
+
+          const [voteParticipants, creators] = await Promise.all([
+            voteParticipantIds.length
+              ? db.participant.findMany({
+                  where: { id: { in: voteParticipantIds } },
+                  select: { id: true, name: true, avatarUrl: true, interests: true },
+                })
+              : Promise.resolve([]),
+            creatorUserIds.length
+              ? db.user.findMany({
+                  where: { id: { in: creatorUserIds } },
+                  select: { id: true, secondmeUserId: true },
+                })
+              : Promise.resolve([]),
+          ]);
+
+          const creatorSecondMeIds = Array.from(new Set(creators.map((u) => u.secondmeUserId)));
+          const creatorParticipants = creatorSecondMeIds.length
+            ? await db.participant.findMany({
+                where: { secondmeId: { in: creatorSecondMeIds } },
+                select: { secondmeId: true, name: true, avatarUrl: true, id: true },
+              })
+            : [];
+
+          const participantById = new Map(voteParticipants.map((p) => [p.id, p]));
+          const creatorByUserId = new Map(creators.map((u) => [u.id, u]));
+          const creatorParticipantBySecondmeId = new Map(creatorParticipants.map((p) => [p.secondmeId, p]));
+
+          const feedItems = questions.map((q) => {
+            const totalVotes = q.votes.length;
+            const redVotes = q.votes.filter((v) => v.position === 1).length;
+            const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5;
+            const blueRatio = totalVotes > 0 ? (totalVotes - redVotes) / totalVotes : 0.5;
+            const blueVotes = totalVotes - redVotes;
+
+            const redComments = q.votes.filter((v) => v.position === 1).map((v) => v.comment);
+            const blueComments = q.votes.filter((v) => v.position === -1).map((v) => v.comment);
+
+            const previewComments = q.votes.slice(0, 2).map((v) => {
+              const p = v.participantId ? participantById.get(v.participantId) : null;
+              return {
+                id: v.id,
+                name: p?.name || "匿名分身",
+                avatarUrl: p?.avatarUrl,
+                content: v.comment,
+                side: v.position === 1 ? ("red" as const) : ("blue" as const),
+                tags: p?.interests || [],
+              };
+            });
+
+            const structuredComments = q.votes.map((v) => {
+              const p = v.participantId ? participantById.get(v.participantId) : null;
+              return {
+                id: v.id,
+                name: p?.name || "匿名分身",
+                avatarUrl: p?.avatarUrl,
+                content: v.comment,
+                side: v.position === 1 ? ("red" as const) : ("blue" as const),
+                tags: p?.interests || [],
+              };
+            });
+
+            let creatorName = "社区精选";
+            let creatorAvatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${q.id}`;
+
+            if (q.userId) {
+              const user = creatorByUserId.get(q.userId);
+              if (user?.secondmeUserId) {
+                const participant = creatorParticipantBySecondmeId.get(user.secondmeUserId);
+                if (participant) {
+                  creatorName = participant.name;
+                  creatorAvatar = participant.avatarUrl || `https://api.dicebear.com/7.x/notionists/svg?seed=${participant.id}`;
+                }
+              }
+            }
+
+            return {
+              id: q.id,
+              creatorUserId: q.userId,
+              userInfo: { name: creatorName, avatarUrl: creatorAvatar },
+              timeAgo: new Date(q.createdAt).toLocaleString("zh-CN", {
+                month: "numeric",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              content: q.content,
+              arenaType: q.arenaType,
+              status: q.status,
+              redVotes,
+              blueVotes,
+              redRatio,
+              blueRatio,
+              commentCount: totalVotes,
+              debateTurns: [],
+              previewComments,
+              structuredComments,
+              fullComments: { red: redComments, blue: blueComments },
+            };
+          });
+
+          const payload = {
+            success: true,
+            data: feedItems,
+            stats: { totalParticipants, totalQuestions },
+          };
+
+          let maxTs = 0;
+          for (const q of questions) {
+            const qTs = q.createdAt instanceof Date ? q.createdAt.getTime() : 0;
+            if (qTs > maxTs) maxTs = qTs;
+          }
+          const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
+          feedCache = { at: Date.now(), payload, etag };
+          return payload;
+        })();
+        feedInFlight = p.finally(() => {
+          if (feedInFlight === p) feedInFlight = null;
+        });
+      }
+
+      if (ifNoneMatch && cache.etag && ifNoneMatch === cache.etag) {
+        logApiEnd(ctx, "api.feed", { status: 304, dur_ms: Date.now() - t0, cache: "stale_304" });
+        return new Response(null, {
+          status: 304,
+          headers: {
+            etag: cache.etag,
+            "cache-control": cacheControlValue(),
+            "x-feed-cache": "stale",
+          },
+        });
+      }
+
+      logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "stale" });
+      return NextResponse.json(cache.payload, {
+        headers: {
+          etag: cache.etag,
+          "cache-control": cacheControlValue(),
+          "x-feed-cache": "stale",
         },
       });
     }
@@ -118,13 +303,13 @@ export async function GET(req: Request) {
       return NextResponse.json(payload, {
         headers: {
           etag,
-          "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+          "cache-control": cacheControlValue(),
           "x-feed-cache": "wait",
         },
       });
     }
 
-    feedInFlight = (async () => {
+    const p = (async () => {
     // 1. Fetch questions
     const [questions, totalParticipants, totalQuestions] = await Promise.all([
       db.question.findMany({
@@ -289,6 +474,9 @@ export async function GET(req: Request) {
     feedCache = { at: Date.now(), payload, etag };
     return payload;
     })();
+    feedInFlight = p.finally(() => {
+      if (feedInFlight === p) feedInFlight = null;
+    });
 
     const payload = await feedInFlight;
     const durMs = Date.now() - t0;
@@ -303,7 +491,7 @@ export async function GET(req: Request) {
         status: 304,
         headers: {
           etag,
-          "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+          "cache-control": cacheControlValue(),
           "x-feed-cache": "miss",
         },
       });
@@ -313,7 +501,7 @@ export async function GET(req: Request) {
     return NextResponse.json(payload, {
       headers: {
         etag,
-        "cache-control": `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`,
+        "cache-control": cacheControlValue(),
         "x-feed-cache": "miss",
       },
     });
@@ -324,7 +512,5 @@ export async function GET(req: Request) {
       { success: false, error: 'Failed to fetch feed', details: String(error) },
       { status: 500 }
     );
-  } finally {
-    feedInFlight = null;
   }
 }
