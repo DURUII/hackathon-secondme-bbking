@@ -167,6 +167,7 @@ function formatQuoteForDisplay(quote: string): string {
 }
 
 export default function PilFeature() {
+  const clientTraceId = useMemo(() => crypto.randomUUID().slice(0, 8), []);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
@@ -188,7 +189,10 @@ export default function PilFeature() {
     let mounted = true;
     (async () => {
       try {
-        const res = await fetch("/qipa-waiting-quotes.csv", { cache: "force-cache" });
+        const res = await fetch("/qipa-waiting-quotes.csv", {
+          cache: "force-cache",
+          headers: { "x-client-trace-id": clientTraceId },
+        });
         if (!res.ok) return;
         const raw = await res.text();
         const parsed = parseWaitingQuotesCsv(raw);
@@ -203,7 +207,7 @@ export default function PilFeature() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [clientTraceId]);
 
   const currentWaitingQuote = useMemo(() => {
     if (!sessionLoading) return null;
@@ -314,7 +318,7 @@ export default function PilFeature() {
   // Fetch Feed
   const fetchFeed = useCallback(async () => {
     try {
-      const res = await fetch("/api/feed");
+      const res = await fetch("/api/feed", { headers: { "x-client-trace-id": clientTraceId } });
       const raw = await res.text();
       let data: unknown = null;
       try {
@@ -354,7 +358,7 @@ export default function PilFeature() {
     } finally {
       setIsLoadingFeed(false);
     }
-  }, []);
+  }, [clientTraceId]);
 
   // NOTE: Debate heartbeat is server-side only (Vercel Cron / internal secret).
 
@@ -386,8 +390,8 @@ export default function PilFeature() {
         };
 
         const [userRet, regRet] = await Promise.allSettled([
-          fetch("/api/secondme/user/info"),
-          fetch("/api/register", { method: "POST" }),
+          fetch("/api/secondme/user/info", { headers: { "x-client-trace-id": clientTraceId } }),
+          fetch("/api/register", { method: "POST", headers: { "x-client-trace-id": clientTraceId } }),
         ]);
 
         if (userRet.status === "fulfilled") {
@@ -410,7 +414,7 @@ export default function PilFeature() {
               setCurrentUserId(regData.data.userId);
             }
             // Trigger backfill for new/existing participant to vote on recent questions.
-            fetch("/api/backfill", { method: "POST" }).catch(console.error);
+            fetch("/api/backfill", { method: "POST", headers: { "x-client-trace-id": clientTraceId } }).catch(console.error);
           }
         }
       } catch (error) {
@@ -418,7 +422,7 @@ export default function PilFeature() {
       }
     }
     fetchUserInfo();
-  }, []);
+  }, [clientTraceId]);
 
   // Removed redundant definition of fetchFeed here (it was moved up)
   // const fetchFeed = useCallback(...) 
@@ -467,7 +471,7 @@ export default function PilFeature() {
       // 2. Call API
       const publishRes = await fetch("/api/publish", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-client-trace-id": clientTraceId },
         body: JSON.stringify(data),
       });
       const publishData = await publishRes.json();
@@ -509,10 +513,10 @@ export default function PilFeature() {
     setExpandedId(itemId);
     fetch("/api/question/view", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-client-trace-id": clientTraceId },
       body: JSON.stringify({ questionId: itemId }),
     }).catch((err) => console.error("Failed to enqueue question view", err));
-  }, []);
+  }, [clientTraceId]);
 
   const filteredFeedItems = feedItems.filter((item) => {
     if (activeTab === "all") return true;

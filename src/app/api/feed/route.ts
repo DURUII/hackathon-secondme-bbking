@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { QuestionManager } from '@/lib/question-manager';
 import { VoteManager } from '@/lib/vote-manager';
 import { ParticipantManager } from '@/lib/participant-manager';
+import { getReqLogContext, logApiBegin, logApiEnd, logApiError } from "@/lib/obs/server-log";
 
 // Preset questions for seeding
 const PRESET_QUESTIONS = [
@@ -60,7 +61,10 @@ const MOCK_PARTICIPANTS = [
   { name: "老好人", secondmeId: "mock_nice", avatarUrl: "https://api.dicebear.com/7.x/notionists/svg?seed=Nice" }
 ];
 
-export async function GET() {
+export async function GET(req: Request) {
+  const ctx = getReqLogContext(req);
+  const t0 = Date.now();
+  logApiBegin(ctx, "api.feed", {});
   try {
     // 1. Fetch questions
     const [questions, totalParticipants, totalQuestions] = await Promise.all([
@@ -207,6 +211,8 @@ export async function GET() {
       };
     });
 
+    const durMs = Date.now() - t0;
+    logApiEnd(ctx, "api.feed", { status: 200, dur_ms: durMs, items: feedItems.length });
     return NextResponse.json({
       success: true,
       data: feedItems,
@@ -217,7 +223,7 @@ export async function GET() {
     });
 
   } catch (error) {
-    console.error('[FEED] Error:', error);
+    logApiError(ctx, "api.feed", { dur_ms: Date.now() - t0, status: 500 }, error);
     return NextResponse.json(
       { success: false, error: 'Failed to fetch feed', details: String(error) },
       { status: 500 }

@@ -3,15 +3,16 @@ import { secondMeFetch } from "@/lib/secondme-server";
 import { readJsonOrText } from "@/lib/secondme-http";
 import { db } from "@/lib/db";
 import { getSecondMeAccessToken } from "@/lib/secondme-server";
+import { getReqLogContext, logApiBegin, logApiEnd, logApiError, logEvent } from "@/lib/obs/server-log";
 
-export async function GET() {
-  const requestId = crypto.randomUUID().slice(0, 8);
-  const logPrefix = `[SecondMe Proxy UserInfo][${requestId}]`;
-  console.log(`${logPrefix} BEGIN`, { stage: "begin" });
+export async function GET(req: Request) {
+  const ctx = getReqLogContext(req);
+  const t0 = Date.now();
+  logApiBegin(ctx, "api.secondme_user_info", {});
 
   const result = await secondMeFetch("/api/secondme/user/info");
   if (!result.hasAuth) {
-    console.warn(`${logPrefix} END`, { stage: "unauthorized", status: result.status });
+    logApiEnd(ctx, "api.secondme_user_info", { status: result.status, dur_ms: Date.now() - t0, stage: "unauthorized" });
     return NextResponse.json(result.error, { status: result.status });
   }
 
@@ -72,14 +73,22 @@ export async function GET() {
                   }
               });
               
-              console.log(`${logPrefix} SYNC`, { success: true, secondmeUserId: normalizedSecondmeUserId });
+              logEvent("info", "api.secondme_user_info.sync", {
+                requestId: ctx.requestId,
+                clientTraceId: ctx.clientTraceId,
+                secondmeUserId: normalizedSecondmeUserId,
+              });
           }
       } catch (e) {
-          console.error(`${logPrefix} SYNC_ERROR`, e);
+          logApiError(ctx, "api.secondme_user_info", { dur_ms: Date.now() - t0, status: result.status, stage: "sync_error" }, e);
       }
   }
   // ----------------------------------
 
-  console.log(`${logPrefix} END`, { stage: result.ok ? "success" : "upstream_failed", status: result.status });
+  logApiEnd(ctx, "api.secondme_user_info", {
+    status: result.status,
+    dur_ms: Date.now() - t0,
+    stage: result.ok ? "success" : "upstream_failed",
+  });
   return NextResponse.json(json ?? { code: result.status, message: "Empty response", data: null }, { status: result.status });
 }
