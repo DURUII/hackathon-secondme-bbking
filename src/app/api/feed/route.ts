@@ -20,6 +20,58 @@ function cacheControlValue() {
   return `public, s-maxage=${FEED_S_MAXAGE_SEC}, stale-while-revalidate=${FEED_SWR_SEC}`;
 }
 
+function buildFallbackFeedPayload() {
+  const avatarByName = new Map(MOCK_PARTICIPANTS.map((p) => [p.name, p.avatarUrl] as const));
+  const feedItems = PRESET_QUESTIONS.map((q, idx) => {
+    const id = `preset_${idx}`;
+    const votes = q.mockVotes || [];
+    const totalVotes = votes.length;
+    const redVotes = votes.filter((v) => v.position === 1).length;
+    const blueVotes = totalVotes - redVotes;
+    const redRatio = totalVotes > 0 ? redVotes / totalVotes : 0.5;
+    const blueRatio = totalVotes > 0 ? blueVotes / totalVotes : 0.5;
+
+    const structuredComments = votes.map((v, vIdx) => ({
+      id: `${id}_v${vIdx}`,
+      name: v.name,
+      avatarUrl: avatarByName.get(v.name),
+      content: v.comment,
+      side: v.position === 1 ? ("red" as const) : ("blue" as const),
+      tags: [],
+    }));
+
+    const previewComments = structuredComments.slice(0, 2);
+    const redComments = structuredComments.filter((c) => c.side === "red").map((c) => c.content);
+    const blueComments = structuredComments.filter((c) => c.side === "blue").map((c) => c.content);
+
+    return {
+      id,
+      creatorUserId: null as string | null,
+      userInfo: { name: "社区精选", avatarUrl: `https://api.dicebear.com/7.x/notionists/svg?seed=${id}` },
+      timeAgo: "刚刚",
+      content: q.content,
+      arenaType: q.arenaType,
+      status: "collected" as const,
+      redVotes,
+      blueVotes,
+      redRatio,
+      blueRatio,
+      commentCount: totalVotes,
+      debateTurns: [],
+      previewComments,
+      structuredComments,
+      fullComments: { red: redComments, blue: blueComments },
+    };
+  });
+
+  return {
+    success: true,
+    data: feedItems,
+    stats: { totalParticipants: MOCK_PARTICIPANTS.length, totalQuestions: PRESET_QUESTIONS.length },
+    fallback: true,
+  };
+}
+
 // Preset questions for seeding
 const PRESET_QUESTIONS = [
   { 
@@ -116,27 +168,28 @@ export async function GET(req: Request) {
       if (!feedInFlight) {
         const p = (async () => {
           // Force refresh (same body as miss path).
-          // 1. Fetch questions
-          const [questions, totalParticipants, totalQuestions] = await Promise.all([
-            db.question.findMany({
-              where: { deletedAt: null },
-              orderBy: { createdAt: "desc" },
-              include: {
-                votes: {
-                  orderBy: { createdAt: "asc" },
-                  select: {
-                    id: true,
-                    participantId: true,
-                    position: true,
-                    comment: true,
+          try {
+            // 1. Fetch questions
+            const [questions, totalParticipants, totalQuestions] = await Promise.all([
+              db.question.findMany({
+                where: { deletedAt: null },
+                orderBy: { createdAt: "desc" },
+                include: {
+                  votes: {
+                    orderBy: { createdAt: "asc" },
+                    select: {
+                      id: true,
+                      participantId: true,
+                      position: true,
+                      comment: true,
+                    },
                   },
                 },
-              },
-              take: 20,
-            }),
-            db.participant.count(),
-            db.question.count({ where: { deletedAt: null } }),
-          ]);
+                take: 20,
+              }),
+              db.participant.count(),
+              db.question.count({ where: { deletedAt: null } }),
+            ]);
 
           const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
           const voteParticipantIds = Array.from(
@@ -257,6 +310,11 @@ export async function GET(req: Request) {
           const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
           feedCache = { at: Date.now(), payload, etag };
           return payload;
+          } catch (err) {
+            // Background refresh must not crash the handler (and must not trigger unhandled rejections).
+            console.warn("[FEED] Background refresh failed; keeping stale cache:", err);
+            return null;
+          }
         })();
         feedInFlight = p.finally(() => {
           if (feedInFlight === p) feedInFlight = null;
@@ -310,27 +368,28 @@ export async function GET(req: Request) {
     }
 
     const p = (async () => {
-    // 1. Fetch questions
-    const [questions, totalParticipants, totalQuestions] = await Promise.all([
-      db.question.findMany({
-        where: { deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        include: {
-          votes: {
-            orderBy: { createdAt: 'asc' },
-            select: {
-              id: true,
-              participantId: true,
-              position: true,
-              comment: true,
+    try {
+      // 1. Fetch questions
+      const [questions, totalParticipants, totalQuestions] = await Promise.all([
+        db.question.findMany({
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            votes: {
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                participantId: true,
+                position: true,
+                comment: true,
+              },
             },
           },
-        },
-        take: 20, 
-      }),
-      db.participant.count(),
-      db.question.count({ where: { deletedAt: null } })
-    ]);
+          take: 20, 
+        }),
+        db.participant.count(),
+        db.question.count({ where: { deletedAt: null } })
+      ]);
 
     // 2. Prefetch related entities in batch to avoid N+1 query latency.
     const creatorUserIds = Array.from(new Set(questions.map((q) => q.userId).filter(Boolean) as string[]));
@@ -473,6 +532,14 @@ export async function GET(req: Request) {
     const etag = `W/"feed-${totalQuestions}-${maxTs}"`;
     feedCache = { at: Date.now(), payload, etag };
     return payload;
+    } catch (err) {
+      // Local dev often has DB connectivity issues; keep home usable with preset feed.
+      console.warn("[FEED] DB query failed; falling back to preset feed:", err);
+      const payload = buildFallbackFeedPayload();
+      const etag = `W/"feed-fallback-${PRESET_QUESTIONS.length}"`;
+      feedCache = { at: Date.now(), payload, etag };
+      return payload;
+    }
     })();
     feedInFlight = p.finally(() => {
       if (feedInFlight === p) feedInFlight = null;

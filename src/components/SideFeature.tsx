@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, useLayoutEffect } from "react";
 import { QuestionInput } from "@/components/QuestionInput";
 import { FeedCard } from "@/components/FeedCard";
 import { ArenaDisplay } from "@/components/ArenaDisplay";
@@ -183,6 +183,7 @@ export default function PilFeature() {
     }
   });
   const [avatarReady, setAvatarReady] = useState(false);
+  const avatarImgRef = useRef<HTMLImageElement | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -202,6 +203,15 @@ export default function PilFeature() {
   useEffect(() => {
     // Reset fade state when avatar changes.
     setAvatarReady(false);
+  }, [userInfo?.avatarUrl]);
+
+  useLayoutEffect(() => {
+    // Avoid 1-frame "flash" when the browser already has the image cached.
+    const el = avatarImgRef.current;
+    if (!el) return;
+    if (el.complete && el.naturalWidth > 0) {
+      setAvatarReady(true);
+    }
   }, [userInfo?.avatarUrl]);
 
   useEffect(() => {
@@ -582,7 +592,7 @@ export default function PilFeature() {
             <div
               className={[
                 "absolute inset-0 flex items-center justify-center text-white/30",
-                "transition-opacity duration-300",
+                "transition-opacity duration-500 ease-out will-change-[opacity]",
                 userInfo?.avatarUrl && avatarReady ? "opacity-0" : "opacity-100",
               ].join(" ")}
               aria-hidden={Boolean(userInfo?.avatarUrl && avatarReady)}
@@ -591,6 +601,7 @@ export default function PilFeature() {
             </div>
             {userInfo?.avatarUrl ? (
               <img
+                ref={avatarImgRef}
                 src={userInfo.avatarUrl}
                 alt="User"
                 loading="eager"
@@ -600,7 +611,7 @@ export default function PilFeature() {
                 onError={() => setAvatarReady(false)}
                 className={[
                   "absolute inset-0 w-full h-full object-cover",
-                  "transition-opacity duration-300",
+                  "transition-opacity duration-500 ease-out will-change-[opacity]",
                   avatarReady ? "opacity-100" : "opacity-0",
                 ].join(" ")}
               />
@@ -630,7 +641,20 @@ export default function PilFeature() {
               ].map((tab) => (
                 <button
                   key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
+                  onClick={async () => {
+                    if (tab.key !== "proposed") {
+                      setActiveTab(tab.key);
+                      return;
+                    }
+
+                    // Proposed tab needs current user id; lazily resolve on first access.
+                    const userId = await ensureRegistered();
+                    if (!userId) {
+                      window.location.href = "/api/auth/login";
+                      return;
+                    }
+                    setActiveTab(tab.key);
+                  }}
                   className={`px-4 py-1.5 text-xs font-bold transition-all rounded-md ${
                     activeTab === tab.key
                       ? "bg-white text-black shadow-sm"
