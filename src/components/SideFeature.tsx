@@ -182,6 +182,7 @@ export default function PilFeature() {
       return null;
     }
   });
+  const [avatarReady, setAvatarReady] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -197,6 +198,11 @@ export default function PilFeature() {
     startedAt: number;
   } | null>(null);
   const publishInFlightRef = useRef(false);
+
+  useEffect(() => {
+    // Reset fade state when avatar changes.
+    setAvatarReady(false);
+  }, [userInfo?.avatarUrl]);
 
   useEffect(() => {
     let mounted = true;
@@ -572,14 +578,33 @@ export default function PilFeature() {
                </span>
              </div>
           </div>
-          <div className="w-9 h-9 rounded-full bg-white/5 border border-white/10 overflow-hidden">
+          <div className="relative w-9 h-9 rounded-full bg-white/5 border border-white/10 overflow-hidden">
+            <div
+              className={[
+                "absolute inset-0 flex items-center justify-center text-white/30",
+                "transition-opacity duration-300",
+                userInfo?.avatarUrl && avatarReady ? "opacity-0" : "opacity-100",
+              ].join(" ")}
+              aria-hidden={Boolean(userInfo?.avatarUrl && avatarReady)}
+            >
+              <User className="w-4 h-4" />
+            </div>
             {userInfo?.avatarUrl ? (
-              <img src={userInfo.avatarUrl} alt="User" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-white/30">
-                <User className="w-4 h-4" />
-              </div>
-            )}
+              <img
+                src={userInfo.avatarUrl}
+                alt="User"
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+                onLoad={() => setAvatarReady(true)}
+                onError={() => setAvatarReady(false)}
+                className={[
+                  "absolute inset-0 w-full h-full object-cover",
+                  "transition-opacity duration-300",
+                  avatarReady ? "opacity-100" : "opacity-0",
+                ].join(" ")}
+              />
+            ) : null}
           </div>
         </div>
       </header>
