@@ -394,12 +394,6 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
         synth.cancel();
         speechUtteranceRef.current = utterance;
         synth.speak(utterance);
-
-        if (!soundUnlockedRef.current) {
-          soundUnlockedRef.current = true;
-          setSoundUnlocked(true);
-        }
-        setSoundBlocked(false);
       } catch {
         resolve(false);
       }
@@ -430,7 +424,8 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
 
         const url = await currentTask;
         if (!url) {
-          await speakWithBrowserTts(item.text);
+          // Upstream TTS unavailable: don't silently fall back to browser TTS.
+          // Browser TTS has a very different voice and can surprise users.
           speakQueueRef.current.shift();
           continue;
         }
@@ -448,15 +443,23 @@ export default function SessionClient({ sessionId }: { sessionId: string }) {
           }
           setSoundBlocked(false);
         } catch {
-          // If media autoplay is blocked or upstream audio is unavailable,
-          // try browser TTS to keep voice continuity.
-          const spoken = await speakWithBrowserTts(item.text);
-          if (spoken) {
-            speakQueueRef.current.shift();
-            continue;
+          // Most common case here is autoplay being blocked (needs a user gesture).
+          // Do NOT fall back to browser TTS here; prompt the user to unlock sound,
+          // otherwise first-time users get "browser voice" even after enabling SOUND.
+          if (!soundUnlockedRef.current) {
+            setSoundBlocked(true);
+            return;
           }
-          setSoundBlocked(true);
-          return;
+
+          // If audio is already unlocked but playback still fails (bad URL/codec/etc),
+          // browser TTS is an acceptable last-resort.
+          const spoken = await speakWithBrowserTts(item.text);
+          if (!spoken) {
+            setSoundBlocked(true);
+            return;
+          }
+          speakQueueRef.current.shift();
+          continue;
         }
 
         await new Promise<void>((resolve) => {
