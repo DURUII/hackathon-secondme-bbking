@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { secondMeFetch } from "@/lib/secondme-server";
 import { readJsonOrText } from "@/lib/secondme-http";
-import { db } from "@/lib/db";
-import { getSecondMeAccessToken } from "@/lib/secondme-server";
-import { getReqLogContext, logApiBegin, logApiEnd, logApiError, logEvent } from "@/lib/obs/server-log";
+import { getReqLogContext, logApiBegin, logApiEnd } from "@/lib/obs/server-log";
 
 export async function GET(req: Request) {
   const ctx = getReqLogContext(req);
@@ -33,57 +31,7 @@ export async function GET(req: Request) {
       ? (parsed as UserInfoResponse)
       : undefined;
 
-  // --- Auto-Sync User to Database ---
-  const userInfo = json?.data;
-  const secondmeUserId = userInfo?.id ?? userInfo?.userId;
-  if (result.ok && secondmeUserId && userInfo) {
-      try {
-          const accessToken = await getSecondMeAccessToken();
-          const normalizedSecondmeUserId = String(secondmeUserId);
-          
-          if (accessToken) {
-              await db.user.upsert({
-                  where: { secondmeUserId: normalizedSecondmeUserId },
-                  update: {
-                      accessToken: accessToken,
-                      tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Refresh expiry
-                  },
-                  create: {
-                      secondmeUserId: normalizedSecondmeUserId,
-                      accessToken: accessToken,
-                      refreshToken: "", // We don't have refresh token here, but that's fine
-                      tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-                  }
-              });
-              
-              // Also sync Participant
-              await db.participant.upsert({
-                  where: { secondmeId: normalizedSecondmeUserId },
-                  update: {
-                      lastActiveAt: new Date(),
-                      name: userInfo.name || userInfo.nickname || '用户',
-                      avatarUrl: userInfo.avatar || userInfo.avatarUrl,
-                      isActive: true
-                  },
-                  create: {
-                      secondmeId: normalizedSecondmeUserId,
-                      name: userInfo.name || userInfo.nickname || '用户',
-                      avatarUrl: userInfo.avatar || userInfo.avatarUrl,
-                      isActive: true
-                  }
-              });
-              
-              logEvent("info", "api.secondme_user_info.sync", {
-                requestId: ctx.requestId,
-                clientTraceId: ctx.clientTraceId,
-                secondmeUserId: normalizedSecondmeUserId,
-              });
-          }
-      } catch (e) {
-          logApiError(ctx, "api.secondme_user_info", { dur_ms: Date.now() - t0, status: result.status, stage: "sync_error" }, e);
-      }
-  }
-  // ----------------------------------
+  // Note: avoid DB writes here; keep this endpoint as a fast read proxy.
 
   logApiEnd(ctx, "api.secondme_user_info", {
     status: result.status,

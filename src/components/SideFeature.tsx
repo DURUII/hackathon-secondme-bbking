@@ -389,33 +389,18 @@ export default function PilFeature() {
           }
         };
 
-        const [userRet, regRet] = await Promise.allSettled([
-          fetch("/api/secondme/user/info", { headers: { "x-client-trace-id": clientTraceId } }),
-          fetch("/api/register", { method: "POST", headers: { "x-client-trace-id": clientTraceId } }),
-        ]);
+        const userRet = await fetch("/api/secondme/user/info", {
+          headers: { "x-client-trace-id": clientTraceId },
+        });
 
-        if (userRet.status === "fulfilled") {
-          const userRaw = await userRet.value.text();
-          const userData = parseJson(userRaw) as
-            | { code?: number; data?: { name?: string; nickname?: string; avatar?: string; avatarUrl?: string } }
-            | null;
-          if (userRet.value.status !== 401 && userData?.code !== 401 && userData?.code === 0 && userData?.data) {
-            const name = userData.data.name || userData.data.nickname || "我";
-            const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
-            setUserInfo({ name, avatarUrl });
-          }
-        }
-
-        if (regRet.status === "fulfilled") {
-          const regRaw = await regRet.value.text();
-          const regData = parseJson(regRaw) as { success?: boolean; data?: { userId?: string } } | null;
-          if (regData?.success) {
-            if (typeof regData.data?.userId === "string") {
-              setCurrentUserId(regData.data.userId);
-            }
-            // Trigger backfill for new/existing participant to vote on recent questions.
-            fetch("/api/backfill", { method: "POST", headers: { "x-client-trace-id": clientTraceId } }).catch(console.error);
-          }
+        const userRaw = await userRet.text();
+        const userData = parseJson(userRaw) as
+          | { code?: number; data?: { name?: string; nickname?: string; avatar?: string; avatarUrl?: string } }
+          | null;
+        if (userRet.status !== 401 && userData?.code !== 401 && userData?.code === 0 && userData?.data) {
+          const name = userData.data.name || userData.data.nickname || "我";
+          const avatarUrl = userData.data.avatar || userData.data.avatarUrl;
+          setUserInfo({ name, avatarUrl });
         }
       } catch (error) {
         console.error("Failed to fetch user info", error);
@@ -424,13 +409,42 @@ export default function PilFeature() {
     fetchUserInfo();
   }, [clientTraceId]);
 
+  const ensureRegistered = useCallback(async (): Promise<string | null> => {
+    if (currentUserId) return currentUserId;
+    try {
+      // Use GET /api/register to avoid the heavier "enqueue recent vote tasks" path.
+      const res = await fetch("/api/register", {
+        method: "GET",
+        headers: { "x-client-trace-id": clientTraceId },
+      });
+      if (res.status === 401) return null;
+      const raw = await res.text();
+      let data: unknown = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+      const payload = data as { success?: boolean; data?: { userId?: string } } | null;
+      const userId = payload?.success ? payload?.data?.userId : undefined;
+      if (typeof userId === "string") {
+        setCurrentUserId(userId);
+        return userId;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, [clientTraceId, currentUserId]);
+
   // Removed redundant definition of fetchFeed here (it was moved up)
   // const fetchFeed = useCallback(...) 
 
   // Initial Fetch moved to up too
 
   const handlePublish = async (data: { content: string }) => {
-    if (!currentUserId) {
+    const userId = await ensureRegistered();
+    if (!userId) {
       window.location.href = "/api/auth/login";
       return;
     }
@@ -448,7 +462,7 @@ export default function PilFeature() {
         name: userInfo?.name || "我",
         avatarUrl: userInfo?.avatarUrl,
       },
-      creatorUserId: currentUserId,
+      creatorUserId: userId,
       timeAgo: "刚刚",
       content: data.content,
       arenaType: "toxic",

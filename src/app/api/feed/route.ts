@@ -5,6 +5,10 @@ import { VoteManager } from '@/lib/vote-manager';
 import { ParticipantManager } from '@/lib/participant-manager';
 import { getReqLogContext, logApiBegin, logApiEnd, logApiError } from "@/lib/obs/server-log";
 
+const FEED_CACHE_TTL_MS = 2000;
+let feedCache: { at: number; payload: unknown } | null = null;
+let feedInFlight: Promise<unknown> | null = null;
+
 // Preset questions for seeding
 const PRESET_QUESTIONS = [
   { 
@@ -66,6 +70,19 @@ export async function GET(req: Request) {
   const t0 = Date.now();
   logApiBegin(ctx, "api.feed", {});
   try {
+    const cached = feedCache && Date.now() - feedCache.at < FEED_CACHE_TTL_MS ? feedCache.payload : null;
+    if (cached) {
+      logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "hit" });
+      return NextResponse.json(cached, { headers: { "x-feed-cache": "hit" } });
+    }
+
+    if (feedInFlight) {
+      const payload = await feedInFlight;
+      logApiEnd(ctx, "api.feed", { status: 200, dur_ms: Date.now() - t0, cache: "wait" });
+      return NextResponse.json(payload, { headers: { "x-feed-cache": "wait" } });
+    }
+
+    feedInFlight = (async () => {
     // 1. Fetch questions
     const [questions, totalParticipants, totalQuestions] = await Promise.all([
       db.question.findMany({
@@ -211,16 +228,26 @@ export async function GET(req: Request) {
       };
     });
 
-    const durMs = Date.now() - t0;
-    logApiEnd(ctx, "api.feed", { status: 200, dur_ms: durMs, items: feedItems.length });
-    return NextResponse.json({
+    const payload = {
       success: true,
       data: feedItems,
       stats: {
         totalParticipants,
         totalQuestions
       }
-    });
+    };
+    feedCache = { at: Date.now(), payload };
+    return payload;
+    })();
+
+    const payload = await feedInFlight;
+    const durMs = Date.now() - t0;
+    const items =
+      payload && typeof payload === "object" && "data" in payload && Array.isArray((payload as { data?: unknown }).data)
+        ? ((payload as { data: unknown[] }).data.length)
+        : undefined;
+    logApiEnd(ctx, "api.feed", { status: 200, dur_ms: durMs, items, cache: "miss" });
+    return NextResponse.json(payload, { headers: { "x-feed-cache": "miss" } });
 
   } catch (error) {
     logApiError(ctx, "api.feed", { dur_ms: Date.now() - t0, status: 500 }, error);
@@ -228,5 +255,7 @@ export async function GET(req: Request) {
       { success: false, error: 'Failed to fetch feed', details: String(error) },
       { status: 500 }
     );
+  } finally {
+    feedInFlight = null;
   }
 }
